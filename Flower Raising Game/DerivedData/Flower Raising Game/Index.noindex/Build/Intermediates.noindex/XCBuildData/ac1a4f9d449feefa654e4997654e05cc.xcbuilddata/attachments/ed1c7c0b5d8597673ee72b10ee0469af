@@ -1,0 +1,18 @@
+{
+  "" : {
+    "dependencies" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Index.noindex/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/Flower Raising Game-master.d",
+    "diagnostics" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Index.noindex/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/Flower Raising Game-master.dia",
+    "emit-module-dependencies" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Index.noindex/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/Flower Raising Game-master-emit-module.d",
+    "emit-module-diagnostics" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Index.noindex/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/Flower Raising Game-master-emit-module.dia",
+    "swift-dependencies" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Index.noindex/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/Flower Raising Game-master.swiftdeps"
+  },
+  "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Index.noindex/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/DerivedSources/GeneratedAssetSymbols.swift" : {
+
+  },
+  "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/Flower Raising Game/ContentView.swift" : {
+
+  },
+  "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/Flower Raising Game/Flower_Raising_GameApp.swift" : {
+
+  }
+}

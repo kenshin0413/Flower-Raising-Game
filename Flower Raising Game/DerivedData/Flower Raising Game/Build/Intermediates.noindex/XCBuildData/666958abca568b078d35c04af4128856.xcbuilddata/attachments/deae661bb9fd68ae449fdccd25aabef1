@@ -1,0 +1,38 @@
+{
+  "" : {
+    "diagnostics" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/Flower Raising Game-master.dia",
+    "emit-module-dependencies" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/Flower Raising Game-master-emit-module.d",
+    "emit-module-diagnostics" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/Flower Raising Game-master-emit-module.dia",
+    "swift-dependencies" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/Flower Raising Game-master.swiftdeps"
+  },
+  "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/DerivedSources/GeneratedAssetSymbols.swift" : {
+    "const-values" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftconstvalues",
+    "dependencies" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/GeneratedAssetSymbols.d",
+    "diagnostics" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/GeneratedAssetSymbols.dia",
+    "index-unit-output-path" : "/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/GeneratedAssetSymbols.o",
+    "llvm-bc" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/GeneratedAssetSymbols.bc",
+    "object" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/GeneratedAssetSymbols.o",
+    "swift-dependencies" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/GeneratedAssetSymbols.swiftdeps",
+    "swiftmodule" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/GeneratedAssetSymbols~partial.swiftmodule"
+  },
+  "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/Flower Raising Game/ContentView.swift" : {
+    "const-values" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/ContentView.swiftconstvalues",
+    "dependencies" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/ContentView.d",
+    "diagnostics" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/ContentView.dia",
+    "index-unit-output-path" : "/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/ContentView.o",
+    "llvm-bc" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/ContentView.bc",
+    "object" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/ContentView.o",
+    "swift-dependencies" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/ContentView.swiftdeps",
+    "swiftmodule" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/ContentView~partial.swiftmodule"
+  },
+  "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/Flower Raising Game/Flower_Raising_GameApp.swift" : {
+    "const-values" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/Flower_Raising_GameApp.swiftconstvalues",
+    "dependencies" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/Flower_Raising_GameApp.d",
+    "diagnostics" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/Flower_Raising_GameApp.dia",
+    "index-unit-output-path" : "/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/Flower_Raising_GameApp.o",
+    "llvm-bc" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/Flower_Raising_GameApp.bc",
+    "object" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/Flower_Raising_GameApp.o",
+    "swift-dependencies" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/Flower_Raising_GameApp.swiftdeps",
+    "swiftmodule" : "/Users/kenshin/Desktop/Flower-Raising-Game/Flower Raising Game/DerivedData/Flower Raising Game/Build/Intermediates.noindex/Flower Raising Game.build/Debug-iphonesimulator/Flower Raising Game.build/Objects-normal/arm64/Flower_Raising_GameApp~partial.swiftmodule"
+  }
+}
