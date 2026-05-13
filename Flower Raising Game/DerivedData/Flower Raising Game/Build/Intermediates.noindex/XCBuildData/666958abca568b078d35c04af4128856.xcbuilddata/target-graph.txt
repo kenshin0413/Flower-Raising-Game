@@ -1,2 +1,0 @@
-Target dependency graph (1 target)
-Target 'Flower Raising Game' in project 'Flower Raising Game' (no dependencies)
