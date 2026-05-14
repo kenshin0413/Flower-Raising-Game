@@ -9,6 +9,10 @@ import SwiftUI
 
 @main
 struct Flower_Raising_GameApp: App {
+    init() {
+        LocalNotificationService.shared.configure()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
