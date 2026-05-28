@@ -5,18 +5,26 @@ import SwiftUI
 /// ViewはこのViewModelの値を表示し、ボタン操作をViewModelへ伝えるだけにします。
 @MainActor
 final class FlowerGardenViewModel: ObservableObject {
+    private enum CareAction {
+        case water
+        case sunlight
+        case fertilizer
+    }
+
     @Published private(set) var flower: FlowerState
     @Published var selectedWeather: WeatherType
     @Published private(set) var lastTimeMessage: String = "今日も少しずつ育てましょう"
     @Published private(set) var currentTemperature: Double?
     @Published private(set) var currentHumidity: Double?
     @Published private(set) var currentWindSpeed: Double?
+    @Published private(set) var currentPrecipitation: Double?
     @Published private(set) var isCurrentWeatherDaytime: Bool = true
 
     private let storageService: FlowerStorageServicing
     private let weatherService: WeatherServicing
     private let locationService: LocationService
     private var isRefreshingRealWeather = false
+    private var midnightRefreshTask: Task<Void, Never>?
 
     init(
         storageService: FlowerStorageServicing = FlowerStorageService(),
@@ -32,12 +40,19 @@ final class FlowerGardenViewModel: ObservableObject {
         self.selectedWeather = savedFlower.selectedWeather
         self.currentHumidity = savedFlower.lastHumidity
         self.currentWindSpeed = savedFlower.lastWindSpeed
+        self.currentPrecipitation = savedFlower.lastPrecipitation
 
         applyOfflineProgressIfNeeded()
 
         Task {
             await refreshRealWeather()
         }
+
+        scheduleMidnightRefresh()
+    }
+
+    deinit {
+        midnightRefreshTask?.cancel()
     }
 
     var stageName: String {
@@ -68,25 +83,22 @@ final class FlowerGardenViewModel: ObservableObject {
             return String(format: "wilted_stage_%02d", stageNumber)
         }
 
+        if stageNumber == 1 {
+            return "ChatGPT Image 2026年5月15日 12_33_35"
+        }
+
         return String(format: "growth_stage_%02d", stageNumber)
     }
 
     var growthPercentText: String {
-        "\(Int(flower.growth))%"
+        let growth = clamped(flower.growth)
+        let displayGrowth = growth > 0 && growth < 0.1 ? 0.1 : floor(growth * 10) / 10
+
+        return String(format: "%.1f%%", displayGrowth)
     }
 
-    var visualStageProgressPercent: Double {
-        let stageNumber = plantStageNumber(for: flower.growth)
-
-        guard stageNumber < 10 else {
-            return 100
-        }
-
-        let lowerBoundary = visualStageLowerBoundary(for: stageNumber)
-        let upperBoundary = visualStageLowerBoundary(for: stageNumber + 1)
-        let progress = (flower.growth - lowerBoundary) / (upperBoundary - lowerBoundary) * 100
-
-        return clamped(progress)
+    var growthProgressPercent: Double {
+        Double(displayGrowthPercent)
     }
 
     var stressPercent: Double {
@@ -169,6 +181,10 @@ final class FlowerGardenViewModel: ObservableObject {
         !isDead && !hasUsedToday(flower.lastFedAt)
     }
 
+    var isFullyBloomed: Bool {
+        flower.growth >= 100
+    }
+
     var careStreakText: String {
         "\(max(currentCareStreak, 1))日継続"
     }
@@ -186,74 +202,82 @@ final class FlowerGardenViewModel: ObservableObject {
             return "枯れてしまいました。植え替えて新しく育てましょう"
         }
 
+        if isFullyBloomed {
+            return "きれいに開花しました。植え替えると新しい花を育てられます"
+        }
+
         if currentFatalStressHours >= 24 {
-            return "危険な状態が続いています。まず水分・日光・栄養を適正に戻しましょう"
+            return "危険です。水分45-90%・日光55%以上・栄養45-90%へ戻そう"
         }
 
         if isWilted {
-            return "しおれています。良い状態を保つと少しずつ回復します"
+            return "しおれ中。まず不足ゲージを直して、1日安定させよう"
         }
 
         if flower.water >= 96 {
-            return "水分が多すぎます。根腐れしやすい状態です"
+            return "水分過多です。水やりは止めて、日光55%以上を保とう"
         }
 
         if flower.nutrition >= 96 {
-            return "栄養が多すぎます。肥料焼けに注意してください"
+            return "栄養過多です。肥料は止めて、水分45-90%を保とう"
         }
 
         if flower.water < 20 {
-            return "水分がかなり不足しています。乾燥で弱りやすい状態です"
+            return canWaterToday ? "水やりで水分45%以上へ。理想は55-88%" : "水分不足です。明日0時に水やりして55-88%へ"
         }
 
         if flower.sunlight < 42 {
-            return "日光不足で成長が止まっています"
+            return canGiveSunlightToday ? "ライトで日光42%以上へ。55%以上で育ちます" : "日光不足です。明日0時にライトで55%以上へ"
         }
 
         if flower.sunlight < 55 {
-            return "日光不足で成長がかなり遅くなっています"
+            return canGiveSunlightToday ? "日光55%以上が目標。ライトを使うと育ちやすいです" : "日光55%以上が目標。今日は水分と栄養を維持しよう"
         }
 
         if flower.nutrition < 25 {
-            return "栄養不足で成長しにくくなっています"
+            return canFeedToday ? "肥料で栄養45%以上へ。理想は55-90%" : "栄養不足です。明日0時に肥料で55-90%へ"
         }
 
         if deathRiskPercent >= 45 {
-            return "枯れリスクが高めです。過不足のあるゲージを整えましょう"
+            return "枯れリスク高め。水分55-88%・日光55%以上・栄養55-90%へ"
         }
 
         if stressPercent >= 28 {
-            return "ストレスが高く、成長が止まっています"
+            return "ストレス高め。過不足を直して、今日は追加しすぎないようにしよう"
         }
 
         if flower.selectedWeather == .stormy {
-            return "嵐の影響でストレスが溜まりやすい天気です"
+            return "嵐の日は水分90%超えに注意。日光55%以上を優先しよう"
         }
 
         if flower.selectedWeather == .windy || (flower.lastWindSpeed ?? 0) >= 24 {
-            return "風が強く、水分が抜けやすい状態です"
+            return canWaterToday ? "風で乾きやすいです。水分55-88%を目標に水やりを判断" : "風で乾きやすいです。水分45%以上を維持しよう"
         }
 
         if let humidity = flower.lastHumidity {
             if humidity < 35 {
-                return "空気が乾燥していて、水分が減りやすい状態です"
+                return canWaterToday ? "乾燥中。水分55-88%を目標に水やりしよう" : "乾燥中。水分45%以上を切らないように注意"
             }
 
             if humidity >= 90 {
-                return "湿度が高く、土が乾きにくい状態です"
+                return "湿度高め。水分90%超えなら水やりは控えよう"
             }
         }
 
         if !isCurrentWeatherDaytime {
-            return "夜の間は日光が増えません"
+            return canGiveSunlightToday ? "夜は自然日光なし。ライトで55%以上を狙おう" : "夜は水分55-88%・栄養55-90%を維持しよう"
         }
 
-        return "育成環境は安定しています"
+        return "順調です。水分55-88%・日光55%以上・栄養55-90%を維持"
     }
 
     var careAdviceSystemImage: String {
         if isDead {
             return "xmark.circle.fill"
+        }
+
+        if isFullyBloomed {
+            return "sparkles"
         }
 
         if currentFatalStressHours >= 24 || deathRiskPercent >= 45 {
@@ -288,6 +312,10 @@ final class FlowerGardenViewModel: ObservableObject {
             return .red
         }
 
+        if isFullyBloomed {
+            return .green
+        }
+
         if isWilted || stressPercent >= 28 || flower.water >= 96 || flower.nutrition >= 96 {
             return .orange
         }
@@ -299,17 +327,102 @@ final class FlowerGardenViewModel: ObservableObject {
         return .green
     }
 
+    var waterStatusText: String? {
+        switch flower.water {
+        case 95...:
+            return "危険"
+        case 90..<95:
+            return "多い"
+        case ..<20:
+            return "危険"
+        case ..<45:
+            return "少ない"
+        default:
+            return nil
+        }
+    }
+
+    var waterStatusColor: Color {
+        statusColor(for: waterStatusText)
+    }
+
+    var sunlightStatusText: String? {
+        switch flower.sunlight {
+        case 95...:
+            return "多い"
+        case ..<25:
+            return "危険"
+        case ..<55:
+            return "少ない"
+        default:
+            return nil
+        }
+    }
+
+    var sunlightStatusColor: Color {
+        statusColor(for: sunlightStatusText)
+    }
+
+    var nutritionStatusText: String? {
+        switch flower.nutrition {
+        case 95...:
+            return "危険"
+        case 90..<95:
+            return "多い"
+        case ..<25:
+            return "危険"
+        case ..<45:
+            return "少ない"
+        default:
+            return nil
+        }
+    }
+
+    var nutritionStatusColor: Color {
+        statusColor(for: nutritionStatusText)
+    }
+
+    var stressStatusText: String? {
+        switch stressPercent {
+        case 55...:
+            return "危険"
+        case 28..<55:
+            return "高い"
+        default:
+            return nil
+        }
+    }
+
+    var stressStatusColor: Color {
+        statusColor(for: stressStatusText)
+    }
+
+    var deathRiskStatusText: String? {
+        switch deathRiskPercent {
+        case 65...:
+            return "危険"
+        case 35..<65:
+            return "注意"
+        default:
+            return nil
+        }
+    }
+
+    var deathRiskStatusColor: Color {
+        statusColor(for: deathRiskStatusText)
+    }
+
     func waterFlower() {
         guard canWaterToday, !isDead else {
             return
         }
 
-        flower.water = clamped(flower.water + 18)
+        flower.water = clamped(flower.water + 9)
         flower.mood = clamped(flower.mood + 6)
         flower.lastWateredAt = Date()
         recordCareForToday()
         recoverFromCare(stressHours: 8, fatalHours: 4)
-        growIfConditionsAreGood(baseAmount: 0.45)
+        growIfConditionsAreGood(baseAmount: 0.58, action: .water)
         saveCurrentState()
     }
 
@@ -318,13 +431,13 @@ final class FlowerGardenViewModel: ObservableObject {
             return
         }
 
-        flower.sunlight = clamped(flower.sunlight + 18)
+        flower.sunlight = clamped(flower.sunlight + 14)
         flower.water = clamped(flower.water - 5)
         flower.mood = clamped(flower.mood + 4)
         flower.lastSunlightAt = Date()
         recordCareForToday()
         recoverFromCare(stressHours: 6, fatalHours: 3)
-        growIfConditionsAreGood(baseAmount: 0.70)
+        growIfConditionsAreGood(baseAmount: 0.66, action: .sunlight)
         saveCurrentState()
     }
 
@@ -333,12 +446,12 @@ final class FlowerGardenViewModel: ObservableObject {
             return
         }
 
-        flower.nutrition = clamped(flower.nutrition + 20)
+        flower.nutrition = clamped(flower.nutrition + 7)
         flower.mood = clamped(flower.mood + 4)
         flower.lastFedAt = Date()
         recordCareForToday()
         recoverFromCare(stressHours: 9, fatalHours: 4)
-        growIfConditionsAreGood(baseAmount: 0.55)
+        growIfConditionsAreGood(baseAmount: 0.60, action: .fertilizer)
         saveCurrentState()
     }
 
@@ -372,11 +485,13 @@ final class FlowerGardenViewModel: ObservableObject {
             currentTemperature = currentWeather.temperature
             currentHumidity = currentWeather.humidity
             currentWindSpeed = currentWeather.windSpeed
+            currentPrecipitation = currentWeather.precipitation
             isCurrentWeatherDaytime = currentWeather.isDay
             selectedWeather = currentWeather.type
             flower.selectedWeather = currentWeather.type
             flower.lastHumidity = currentWeather.humidity
             flower.lastWindSpeed = currentWeather.windSpeed
+            flower.lastPrecipitation = currentWeather.precipitation
 
             saveCurrentState()
         } catch {
@@ -428,47 +543,6 @@ final class FlowerGardenViewModel: ObservableObject {
         saveCurrentState()
     }
 
-    func forceWiltForTesting() {
-        // 0%は鉢だけなので、しおれ画像を確認できる最低限の成長度まで進めます。
-        flower.growth = max(flower.growth, 12)
-        flower.water = min(flower.water, 12)
-        flower.sunlight = min(flower.sunlight, 12)
-        flower.nutrition = min(flower.nutrition, 12)
-        flower.mood = min(flower.mood, 18)
-        flower.stressHours = 24
-        flower.fatalStressHours = 0
-        saveCurrentState()
-    }
-
-    func forceDeadForTesting() {
-        // 0%は鉢だけなので、枯れ画像を確認できる最低限の成長度まで進めます。
-        flower.growth = max(flower.growth, 12)
-        flower.water = min(flower.water, 5)
-        flower.sunlight = min(flower.sunlight, 8)
-        flower.nutrition = min(flower.nutrition, 5)
-        flower.mood = min(flower.mood, 8)
-        flower.stressHours = 96
-        flower.fatalStressHours = 48
-        saveCurrentState()
-    }
-
-    func forceGrowForTesting() {
-        flower.growth = clamped(flower.growth + 11)
-        flower.water = max(flower.water, 60)
-        flower.sunlight = max(flower.sunlight, 60)
-        flower.nutrition = max(flower.nutrition, 60)
-        flower.mood = max(flower.mood, 70)
-        flower.stressHours = 0
-        flower.fatalStressHours = 0
-        saveCurrentState()
-    }
-
-    func resetTestState() {
-        flower = FlowerState.initial
-        selectedWeather = flower.selectedWeather
-        saveCurrentState()
-    }
-
     private func applyOfflineProgressIfNeeded(now: Date = Date()) {
         let elapsedSeconds = max(0, now.timeIntervalSince(flower.lastOpenedAt))
         let elapsedHours = elapsedSeconds / 3600
@@ -486,32 +560,44 @@ final class FlowerGardenViewModel: ObservableObject {
 
         let simulatedHours = min(elapsedHours, 168)
         let simulatedStart = now.addingTimeInterval(-simulatedHours * 3600)
-        let weatherHours = weatherElapsedHours(from: simulatedStart, to: now)
-
-        // アプリを閉じている間も、直近で取得した現実の天気に合わせて状態を変化させます。
-        applyHourlyWeatherEffect(
-            weather: flower.selectedWeather,
-            daytimeHours: weatherHours.daytime,
-            nighttimeHours: weatherHours.nighttime,
-            humidity: flower.lastHumidity,
-            windSpeed: flower.lastWindSpeed
-        )
-
-        // 栄養は天気に関係なく少しずつ消費されます。
-        flower.nutrition = clamped(flower.nutrition - simulatedHours * 0.25)
-
-        updateStressFromCurrentCondition(hours: simulatedHours)
-
-        if hasPoorCondition {
-            flower.mood = clamped(flower.mood - simulatedHours * 1.0)
-        } else {
-            // 状態が良くても、放置中は少しずつ寂しさが溜まる想定です。
-            flower.mood = clamped(flower.mood - simulatedHours * 0.15)
-            growIfConditionsAreGood(baseAmount: simulatedHours * 0.055)
-        }
+        applyOfflineGrowthAndDecay(from: simulatedStart, to: now)
 
         lastTimeMessage = elapsedMessage(for: elapsedHours)
         saveCurrentState(now: now)
+    }
+
+    private func applyOfflineGrowthAndDecay(from start: Date, to end: Date) {
+        var current = start
+
+        while current < end {
+            let next = min(current.addingTimeInterval(3600), end)
+            let hours = next.timeIntervalSince(current) / 3600
+            let daytimeHours = isDaytime(at: current) ? hours : 0
+            let nighttimeHours = isDaytime(at: current) ? 0 : hours
+
+            if hasPoorCondition {
+                flower.mood = clamped(flower.mood - hours * 1.0)
+            } else {
+                // 条件が良い時間は、アプリを閉じていても少しずつ成長します。
+                // 最高条件を保てた場合、開花まで最短約20日が目安です。
+                growIfConditionsAreGood(baseAmount: hours * 0.167)
+                flower.mood = clamped(flower.mood - hours * 0.15)
+            }
+
+            applyHourlyWeatherEffect(
+                weather: flower.selectedWeather,
+                daytimeHours: daytimeHours,
+                nighttimeHours: nighttimeHours,
+                humidity: flower.lastHumidity,
+                windSpeed: flower.lastWindSpeed
+            )
+
+            // 栄養は天気に関係なく少しずつ消費されます。
+            flower.nutrition = clamped(flower.nutrition - hours * 0.25)
+            updateStressFromCurrentCondition(hours: hours)
+
+            current = next
+        }
     }
 
     private func applyHourlyWeatherEffect(
@@ -624,50 +710,134 @@ final class FlowerGardenViewModel: ObservableObject {
         return hour >= 6 && hour < 18
     }
 
-    private func growIfConditionsAreGood(baseAmount: Double) {
+    private func growIfConditionsAreGood(baseAmount: Double, action: CareAction? = nil) {
         // しおれ・枯れ状態ではまず回復を優先し、成長は止めます。
         guard !isWilted, !isDead else {
             return
         }
 
-        guard flower.water >= 55,
-              flower.water <= 90,
-              flower.sunlight >= 42,
-              flower.sunlight <= 94,
-              flower.nutrition >= 55,
-              flower.nutrition <= 94,
-              flower.mood >= 55,
-              stressPercent < 28 else {
+        let conditionMultiplier = growthConditionMultiplier()
+
+        guard conditionMultiplier > 0 else {
             return
         }
 
-        let averageCondition = (flower.water + flower.sunlight + flower.nutrition + flower.mood) / 4
-        let sunlightGrowthRate: Double
+        let actionMultiplier = growthActionMultiplier(for: action)
+        flower.growth = clamped(flower.growth + baseAmount * conditionMultiplier * actionMultiplier)
+    }
 
-        if flower.sunlight >= 55 {
-            sunlightGrowthRate = 1.0
-        } else if flower.sunlight >= 48 {
-            sunlightGrowthRate = 0.35
-        } else {
-            sunlightGrowthRate = 0.18
+    private func growthConditionMultiplier() -> Double {
+        guard flower.water >= 35,
+              flower.water <= 96,
+              flower.sunlight >= 38,
+              flower.sunlight <= 96,
+              flower.nutrition >= 38,
+              flower.nutrition <= 96,
+              flower.mood >= 45,
+              stressPercent < 36 else {
+            return 0
         }
 
-        guard averageCondition >= 64 else {
-            return
+        let waterScore = rangeScore(flower.water, ideal: 58...84, viable: 35...96)
+        let sunlightScore = rangeScore(flower.sunlight, ideal: 58...88, viable: 38...96)
+        let nutritionScore = rangeScore(flower.nutrition, ideal: 58...86, viable: 38...96)
+        let moodScore = rangeScore(flower.mood, ideal: 68...100, viable: 45...100)
+
+        let coreScore = waterScore * 0.30 + sunlightScore * 0.30 + nutritionScore * 0.25 + moodScore * 0.15
+
+        guard coreScore >= 0.42 else {
+            return 0
         }
 
-        let bonus: Double
-        if averageCondition >= 88 {
-            bonus = 1.25
-        } else if averageCondition >= 78 {
-            bonus = 1.08
-        } else if averageCondition >= 68 {
-            bonus = 0.65
-        } else {
-            bonus = 0.35
+        let stressPenalty = 1 - min(stressPercent / 42, 0.75)
+        return coreScore * weatherGrowthMultiplier() * stressPenalty
+    }
+
+    private func growthActionMultiplier(for action: CareAction?) -> Double {
+        guard let action else {
+            return 1
         }
 
-        flower.growth = clamped(flower.growth + baseAmount * bonus * sunlightGrowthRate)
+        switch action {
+        case .water:
+            let dryWeatherBonus = (flower.selectedWeather == .sunny || flower.selectedWeather == .windy) ? 1.08 : 1.0
+            return rangeScore(flower.water, ideal: 58...82, viable: 35...94) * dryWeatherBonus
+        case .sunlight:
+            let lightWeatherBonus = (flower.selectedWeather == .sunny || flower.selectedWeather == .cloudy) ? 1.08 : 0.92
+            let daytimeBonus = isCurrentWeatherDaytime ? 1.0 : 0.82
+            return rangeScore(flower.sunlight, ideal: 60...90, viable: 38...96) * lightWeatherBonus * daytimeBonus
+        case .fertilizer:
+            return rangeScore(flower.nutrition, ideal: 60...84, viable: 38...94)
+        }
+    }
+
+    private func weatherGrowthMultiplier() -> Double {
+        var multiplier: Double
+
+        switch flower.selectedWeather {
+        case .sunny:
+            multiplier = isCurrentWeatherDaytime ? 1.18 : 0.88
+        case .cloudy:
+            multiplier = 0.90
+        case .rainy:
+            multiplier = 0.78
+        case .stormy:
+            multiplier = 0.42
+        case .windy:
+            multiplier = 0.68
+        }
+
+        if let humidity = flower.lastHumidity {
+            switch humidity {
+            case ..<35:
+                multiplier *= 0.84
+            case 45...78:
+                multiplier *= 1.06
+            case 90...:
+                multiplier *= 0.82
+            default:
+                break
+            }
+        }
+
+        if let windSpeed = flower.lastWindSpeed {
+            switch windSpeed {
+            case 35...:
+                multiplier *= 0.72
+            case 24..<35:
+                multiplier *= 0.84
+            default:
+                break
+            }
+        }
+
+        if let precipitation = flower.lastPrecipitation, precipitation >= 5 {
+            multiplier *= precipitation >= 18 ? 0.76 : 0.90
+        }
+
+        return multiplier
+    }
+
+    private func rangeScore(_ value: Double, ideal: ClosedRange<Double>, viable: ClosedRange<Double>) -> Double {
+        guard viable.contains(value) else {
+            return 0
+        }
+
+        let center = (ideal.lowerBound + ideal.upperBound) / 2
+        let idealHalfWidth = max((ideal.upperBound - ideal.lowerBound) / 2, 1)
+
+        if ideal.contains(value) {
+            let distanceFromCenter = abs(value - center)
+            return 1 - (distanceFromCenter / idealHalfWidth) * 0.16
+        }
+
+        if value < ideal.lowerBound {
+            let recoverableWidth = max(ideal.lowerBound - viable.lowerBound, 1)
+            return max(0, 0.18 + 0.66 * ((value - viable.lowerBound) / recoverableWidth))
+        }
+
+        let recoverableWidth = max(viable.upperBound - ideal.upperBound, 1)
+        return max(0, 0.18 + 0.66 * ((viable.upperBound - value) / recoverableWidth))
     }
 
     private func saveCurrentState(now: Date = Date()) {
@@ -693,6 +863,29 @@ final class FlowerGardenViewModel: ObservableObject {
         min(max(value, 0), 100)
     }
 
+    private func statusColor(for statusText: String?) -> Color {
+        switch statusText {
+        case "危険":
+            return .red
+        case "多い", "高い", "注意":
+            return .orange
+        case "少ない":
+            return .yellow
+        default:
+            return .green
+        }
+    }
+
+    private var displayGrowthPercent: Int {
+        let growth = clamped(flower.growth)
+
+        if growth > 0, growth < 1 {
+            return 1
+        }
+
+        return Int(growth.rounded(.down))
+    }
+
     private var currentStressHours: Double {
         flower.stressHours ?? 0
     }
@@ -706,7 +899,7 @@ final class FlowerGardenViewModel: ObservableObject {
             return 0
         }
 
-        if Calendar.current.isDateInToday(lastCareDate) || Calendar.current.isDateInYesterday(lastCareDate) {
+        if isDateInToday(lastCareDate) || isDateInYesterday(lastCareDate) {
             return flower.careStreak ?? 0
         }
 
@@ -827,14 +1020,12 @@ final class FlowerGardenViewModel: ObservableObject {
     }
 
     private func recordCareForToday(now: Date = Date()) {
-        let calendar = Calendar.current
-
         if let lastCareDate = flower.lastCareDate {
-            if calendar.isDateInToday(lastCareDate) {
+            if isSameCareDay(lastCareDate, now) {
                 return
             }
 
-            if calendar.isDateInYesterday(lastCareDate) {
+            if isPreviousCareDay(lastCareDate, now) {
                 flower.careStreak = (flower.careStreak ?? 0) + 1
             } else {
                 flower.careStreak = 1
@@ -863,25 +1054,66 @@ final class FlowerGardenViewModel: ObservableObject {
             return false
         }
 
-        return Calendar.current.isDateInToday(date)
+        return isDateInToday(date)
+    }
+
+    private func isDateInToday(_ date: Date, now: Date = Date()) -> Bool {
+        isSameCareDay(date, now)
+    }
+
+    private func isDateInYesterday(_ date: Date, now: Date = Date()) -> Bool {
+        isPreviousCareDay(date, now)
+    }
+
+    private func isSameCareDay(_ lhs: Date, _ rhs: Date) -> Bool {
+        let calendar = Calendar.current
+        return calendar.startOfDay(for: lhs) == calendar.startOfDay(for: rhs)
+    }
+
+    private func isPreviousCareDay(_ date: Date, _ now: Date) -> Bool {
+        let calendar = Calendar.current
+        guard let yesterdayStart = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now)) else {
+            return false
+        }
+
+        return calendar.startOfDay(for: date) == yesterdayStart
+    }
+
+    private func scheduleMidnightRefresh() {
+        midnightRefreshTask?.cancel()
+        midnightRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else {
+                    return
+                }
+
+                let now = Date()
+                let nextRefresh = self.nextMidnightRefreshDate(after: now)
+                let waitSeconds = max(1, nextRefresh.timeIntervalSince(now))
+
+                try? await Task.sleep(nanoseconds: UInt64(waitSeconds * 1_000_000_000))
+
+                guard !Task.isCancelled else {
+                    return
+                }
+
+                await MainActor.run {
+                    self.objectWillChange.send()
+                    self.scheduleNotificationsForCurrentState()
+                }
+            }
+        }
+    }
+
+    private func nextMidnightRefreshDate(after date: Date) -> Date {
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: date)
+        return calendar.date(byAdding: .day, value: 1, to: startOfToday) ?? date.addingTimeInterval(24 * 60 * 60)
     }
 
     private func plantStageNumber(for growth: Double) -> Int {
         let stageNumber = Int((growth / 100 * 9).rounded()) + 1
         return min(max(stageNumber, 1), 10)
-    }
-
-    private func visualStageLowerBoundary(for stageNumber: Int) -> Double {
-        if stageNumber <= 1 {
-            return 0
-        }
-
-        if stageNumber >= 10 {
-            return 100
-        }
-
-        // 画像段階はroundで切り替えているため、段階の境目は各中心値の中間になります。
-        return (Double(stageNumber) - 1.5) / 9 * 100
     }
 
     private func elapsedMessage(for hours: Double) -> String {

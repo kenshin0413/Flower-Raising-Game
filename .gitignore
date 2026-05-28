@@ -3,6 +3,9 @@
 # gitignore contributors: remember to update Global/Xcode.gitignore, Objective-C.gitignore & Swift.gitignore
 
 DerivedData/
+**/DerivedData/
+.derived-data-log-*
+xcode-package-cache-backup/
 
 ## User settings
 xcuserdata/

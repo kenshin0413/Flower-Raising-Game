@@ -138,15 +138,15 @@ final class LocalNotificationService: NSObject, UNUserNotificationCenterDelegate
         )
     }
 
-    /// 毎日22時35分に、その時点で予約された内容の通知を届けます。
+    /// 毎日20時に、その時点で予約された内容の通知を届けます。
     private func scheduleDailyCareReminder(message: NotificationMessage) {
         let content = UNMutableNotificationContent()
         content.title = message.title
         content.body = message.body
 
         var dateComponents = DateComponents()
-        dateComponents.hour = 22
-        dateComponents.minute = 35
+        dateComponents.hour = 20
+        dateComponents.minute = 0
 
         let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
         let request = UNNotificationRequest(

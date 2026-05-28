@@ -10,34 +10,35 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var viewModel = FlowerGardenViewModel()
     @Environment(\.scenePhase) private var scenePhase
+    @State private var wateringEffectTrigger = 0
+    @State private var lightEffectTrigger = 0
+    @State private var fertilizerEffectTrigger = 0
 
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [
-                    Color(red: 1.0, green: 0.98, blue: 0.92),
-                    Color(red: 0.90, green: 0.98, blue: 0.88),
-                    Color(red: 0.88, green: 0.96, blue: 1.0)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
+            AnimatedWeatherBackgroundView(
+                weather: viewModel.flower.selectedWeather,
+                isDaytime: viewModel.isCurrentWeatherDaytime,
+                windSpeed: viewModel.currentWindSpeed ?? viewModel.flower.lastWindSpeed,
+                precipitation: viewModel.currentPrecipitation ?? viewModel.flower.lastPrecipitation
             )
-            .ignoresSafeArea()
 
             GeometryReader { geometry in
                 let isCompact = geometry.size.height < 760
                 let horizontalPadding: CGFloat = 20
-                let verticalSpacing: CGFloat = isCompact ? 5 : 7
-                let verticalPadding: CGFloat = 22
-                let headerHeight: CGFloat = isCompact ? 88 : 98
+                let verticalSpacing: CGFloat = isCompact ? 2 : 7
+                let verticalPadding: CGFloat = isCompact ? 10 : 22
+                let headerHeight: CGFloat = isCompact ? 112 : 98
                 let growthCardHeight: CGFloat = 46
                 let adviceCardHeight: CGFloat = 34
                 let statCardHeight: CGFloat = 54
-                let actionCardHeight: CGFloat = 82
+                let actionCardHeight: CGFloat = isCompact ? 68 : 82
                 let spacingHeight = verticalSpacing * 5
                 let reservedHeight = verticalPadding + headerHeight + growthCardHeight + adviceCardHeight + statCardHeight + actionCardHeight + spacingHeight
                 let availablePlantHeight = geometry.size.height - reservedHeight
-                let plantHeight = min(max(availablePlantHeight, 285), 590)
+                let minimumPlantHeight: CGFloat = isCompact ? 190 : 285
+                let maximumPlantHeight: CGFloat = isCompact ? 306 : 590
+                let plantHeight = min(max(availablePlantHeight, minimumPlantHeight), maximumPlantHeight)
 
                 VStack(spacing: verticalSpacing) {
                     GardenHeaderView(
@@ -49,17 +50,35 @@ struct ContentView: View {
                         careStreakText: viewModel.careStreakText
                     )
 
-                    FlowerHeroView(
-                        flower: viewModel.flower,
-                        plantImageName: viewModel.plantImageName,
-                        growthPercentText: viewModel.growthPercentText,
-                        imageHeight: plantHeight,
-                        windSpeed: viewModel.currentWindSpeed ?? viewModel.flower.lastWindSpeed
-                    )
+                    ZStack {
+                        FlowerHeroView(
+                            flower: viewModel.flower,
+                            plantImageName: viewModel.plantImageName,
+                            growthPercentText: viewModel.growthPercentText,
+                            imageHeight: plantHeight,
+                            windSpeed: viewModel.currentWindSpeed ?? viewModel.flower.lastWindSpeed
+                        )
+
+                        WateringEffectView(
+                            trigger: wateringEffectTrigger,
+                            imageHeight: plantHeight
+                        )
+
+                        LightEffectView(
+                            trigger: lightEffectTrigger,
+                            imageHeight: plantHeight
+                        )
+
+                        FertilizerEffectView(
+                            trigger: fertilizerEffectTrigger,
+                            imageHeight: plantHeight
+                        )
+                    }
 
                     GrowthStageCardView(
                         stageName: viewModel.stageName,
-                        stageProgress: viewModel.visualStageProgressPercent
+                        stageProgress: viewModel.growthProgressPercent,
+                        stageProgressText: viewModel.growthPercentText
                     )
 
                     CareAdviceView(
@@ -69,15 +88,55 @@ struct ContentView: View {
                     )
 
                     HStack(spacing: 0) {
-                        StatChipView(title: "水分", value: viewModel.flower.water, color: .cyan, systemImage: "drop.fill")
+                        StatChipView(
+                            title: "水分",
+                            value: viewModel.flower.water,
+                            color: .cyan,
+                            systemImage: "drop.fill",
+                            statusText: viewModel.waterStatusText,
+                            statusColor: viewModel.waterStatusColor,
+                            idealRange: 55...88
+                        )
                         Divider().padding(.vertical, 4)
-                        StatChipView(title: "日光", value: viewModel.flower.sunlight, color: .orange, systemImage: "sun.max.fill")
+                        StatChipView(
+                            title: "日光",
+                            value: viewModel.flower.sunlight,
+                            color: .orange,
+                            systemImage: "sun.max.fill",
+                            statusText: viewModel.sunlightStatusText,
+                            statusColor: viewModel.sunlightStatusColor,
+                            idealRange: 55...94
+                        )
                         Divider().padding(.vertical, 4)
-                        StatChipView(title: "栄養", value: viewModel.flower.nutrition, color: .green, systemImage: "leaf.fill")
+                        StatChipView(
+                            title: "栄養",
+                            value: viewModel.flower.nutrition,
+                            color: .green,
+                            systemImage: "leaf.fill",
+                            statusText: viewModel.nutritionStatusText,
+                            statusColor: viewModel.nutritionStatusColor,
+                            idealRange: 55...90
+                        )
                         Divider().padding(.vertical, 4)
-                        StatChipView(title: "ストレス", value: viewModel.stressPercent, color: .red, systemImage: "exclamationmark.triangle.fill")
+                        StatChipView(
+                            title: "ストレス",
+                            value: viewModel.stressPercent,
+                            color: .red,
+                            systemImage: "exclamationmark.triangle.fill",
+                            statusText: viewModel.stressStatusText,
+                            statusColor: viewModel.stressStatusColor,
+                            idealRange: 0...27
+                        )
                         Divider().padding(.vertical, 4)
-                        StatChipView(title: "枯れリスク", value: viewModel.deathRiskPercent, color: .purple, systemImage: "flame.fill")
+                        StatChipView(
+                            title: "枯れリスク",
+                            value: viewModel.deathRiskPercent,
+                            color: .purple,
+                            systemImage: "flame.fill",
+                            statusText: viewModel.deathRiskStatusText,
+                            statusColor: viewModel.deathRiskStatusColor,
+                            idealRange: 0...34
+                        )
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
@@ -87,20 +146,22 @@ struct ContentView: View {
 
                     ActionButtonsView(
                         isDead: viewModel.isDead,
+                        isFullyBloomed: viewModel.isFullyBloomed,
                         canWater: viewModel.canWaterToday,
                         canGiveSunlight: viewModel.canGiveSunlightToday,
                         canFeed: viewModel.canFeedToday,
+                        isCompact: isCompact,
                         onReplant: viewModel.resetFlower,
-                        onWater: viewModel.waterFlower,
-                        onSunlight: viewModel.giveSunlight,
-                        onFeed: viewModel.feedFlower
+                        onWater: waterFlowerWithEffect,
+                        onSunlight: giveLightWithEffect,
+                        onFeed: feedFlowerWithEffect
                     )
 
                     Spacer(minLength: 0)
                 }
                 .padding(.horizontal, horizontalPadding)
-                .padding(.top, 12)
-                .padding(.bottom, 10)
+                .padding(.top, isCompact ? 8 : 12)
+                .padding(.bottom, isCompact ? 4 : 10)
                 .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
             }
         }
@@ -124,6 +185,33 @@ struct ContentView: View {
                 viewModel.applyElapsedTimeIfNeeded()
             }
         }
+    }
+
+    private func waterFlowerWithEffect() {
+        guard viewModel.canWaterToday else {
+            return
+        }
+
+        wateringEffectTrigger += 1
+        viewModel.waterFlower()
+    }
+
+    private func giveLightWithEffect() {
+        guard viewModel.canGiveSunlightToday else {
+            return
+        }
+
+        lightEffectTrigger += 1
+        viewModel.giveSunlight()
+    }
+
+    private func feedFlowerWithEffect() {
+        guard viewModel.canFeedToday else {
+            return
+        }
+
+        fertilizerEffectTrigger += 1
+        viewModel.feedFlower()
     }
 }
 

@@ -11,6 +11,7 @@ struct FlowerHeroView: View {
 
     var body: some View {
         let plantOffset = plantOffsetCorrection(for: plantImageName)
+        let plantScale = plantScaleCorrection(for: plantImageName)
         let sway = swaySettings(windSpeed: windSpeed, imageName: plantImageName)
 
         ZStack {
@@ -42,7 +43,7 @@ struct FlowerHeroView: View {
                 Image(plantImageName)
                     .resizable()
                     .scaledToFit()
-                    .frame(width: imageHeight * 0.80, height: imageHeight * 0.80)
+                    .frame(width: imageHeight * 0.80 * plantScale, height: imageHeight * 0.80 * plantScale)
                     .rotationEffect(.degrees(isFlowerMoving ? sway.angle : -sway.angle), anchor: .bottom)
                     .offset(x: isFlowerMoving ? imageHeight * sway.horizontalOffset : -imageHeight * sway.horizontalOffset)
                     .offset(
@@ -77,7 +78,7 @@ struct FlowerHeroView: View {
         // 鉢だけの状態や枯れた状態では、風で揺れても不自然なので止めます。
         guard let imageName,
               !imageName.hasPrefix("dead_stage"),
-              imageName != "growth_stage_01" else {
+              !imageName.hasPrefix("ChatGPT Image") else {
             return (0, 0, 3.0)
         }
 
@@ -99,6 +100,8 @@ struct FlowerHeroView: View {
 
     private func plantOffsetCorrection(for imageName: String?) -> (x: CGFloat, y: CGFloat) {
         switch imageName {
+        case "ChatGPT Image 2026年5月15日 12_33_35":
+            return (-0.003, 0.308)
         case "growth_stage_02":
             return (-0.003, 0.012)
         case "growth_stage_03":
@@ -155,6 +158,15 @@ struct FlowerHeroView: View {
             return (-0.014, -0.006)
         default:
             return (0, 0)
+        }
+    }
+
+    private func plantScaleCorrection(for imageName: String?) -> CGFloat {
+        switch imageName {
+        case "ChatGPT Image 2026年5月15日 12_33_35":
+            return 0.145
+        default:
+            return 1.0
         }
     }
 }

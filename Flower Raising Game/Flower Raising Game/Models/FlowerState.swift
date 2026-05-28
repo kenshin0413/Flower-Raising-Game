@@ -31,6 +31,8 @@ struct FlowerState: Codable {
     var lastHumidity: Double?
     /// 最後に取得した風速です。Open-Meteoの値に合わせてkm/hで保存します。
     var lastWindSpeed: Double?
+    /// 最後に取得した降水量です。Open-Meteoの値に合わせてmmで保存します。
+    var lastPrecipitation: Double?
 
     var growthStage: GrowthStage {
         GrowthStage.stage(for: growth)
@@ -54,6 +56,7 @@ struct FlowerState: Codable {
         careStreak: nil,
         lastWeatherAppliedAt: nil,
         lastHumidity: nil,
-        lastWindSpeed: nil
+        lastWindSpeed: nil,
+        lastPrecipitation: nil
     )
 }
