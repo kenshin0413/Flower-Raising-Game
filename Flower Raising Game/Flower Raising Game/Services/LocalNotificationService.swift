@@ -204,8 +204,8 @@ final class LocalNotificationService: NSObject, UNUserNotificationCenterDelegate
 
         if stressPercent >= 55 || deathRiskPercent >= 45 {
             return NotificationMessage(
-                title: "花が少し疲れています",
-                body: mostImportantCareMessage(for: flower, fallback: "ストレスが高くなっています。今日のお世話で状態を整えましょう。")
+                title: "虫害に注意しましょう",
+                body: mostImportantCareMessage(for: flower, fallback: "虫害が広がりやすい状態です。今日のお世話で状態を整えましょう。")
             )
         }
 
@@ -256,7 +256,7 @@ final class LocalNotificationService: NSObject, UNUserNotificationCenterDelegate
         }
 
         return NotificationMessage(
-            title: "花のストレスが高めです",
+            title: "虫害ゲージが高めです",
             body: mostImportantCareMessage(for: flower, fallback: "状態が崩れ始めています。早めにお世話しましょう。")
         )
     }
@@ -287,7 +287,7 @@ final class LocalNotificationService: NSObject, UNUserNotificationCenterDelegate
         }
 
         if flower.mood <= 30 {
-            return "ストレスがかなり高くなっています。今日のお世話で落ち着かせてあげましょう。"
+            return "虫害が広がりやすくなっています。今日のお世話で落ち着かせてあげましょう。"
         }
 
         return fallback

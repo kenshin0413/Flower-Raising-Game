@@ -6,38 +6,44 @@ struct ActionButtonsView: View {
     let canWater: Bool
     let canGiveSunlight: Bool
     let canFeed: Bool
+    let waterSubtitle: String
+    let sunlightSubtitle: String
+    let feedSubtitle: String
     let isCompact: Bool
     let onReplant: () -> Void
+    let onChooseSeed: () -> Void
     let onWater: () -> Void
     let onSunlight: () -> Void
     let onFeed: () -> Void
 
     var body: some View {
-        if isDead {
-            ActionCard(
-                title: "植え替え",
-                subtitle: "最初から育てる",
-                systemImage: "arrow.triangle.2.circlepath",
-                tint: .green,
-                isEnabled: true,
-                isCompact: isCompact,
-                action: onReplant
-            )
-        } else if isFullyBloomed {
-            ActionCard(
-                title: "植え替え",
-                subtitle: "新しい種を育てる",
-                systemImage: "sparkles",
-                tint: .green,
-                isEnabled: true,
-                isCompact: isCompact,
-                action: onReplant
-            )
+        if isDead || isFullyBloomed {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: isCompact ? 8 : 10), count: 2), spacing: isCompact ? 8 : 10) {
+                ActionCard(
+                    title: "植え替え",
+                    subtitle: "同じ種で育てる",
+                    systemImage: "arrow.triangle.2.circlepath",
+                    tint: .green,
+                    isEnabled: true,
+                    isCompact: isCompact,
+                    action: onReplant
+                )
+
+                ActionCard(
+                    title: "種を選ぶ",
+                    subtitle: "植物を変更",
+                    systemImage: "camera.macro",
+                    tint: .mint,
+                    isEnabled: true,
+                    isCompact: isCompact,
+                    action: onChooseSeed
+                )
+            }
         } else {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: isCompact ? 8 : 10), count: 3), spacing: isCompact ? 8 : 10) {
                 ActionCard(
                     title: "水やり",
-                    subtitle: canWater ? "水分 +9%" : "今日は完了",
+                    subtitle: waterSubtitle,
                     systemImage: "drop.fill",
                     tint: .cyan,
                     isEnabled: canWater,
@@ -47,7 +53,7 @@ struct ActionButtonsView: View {
 
                 ActionCard(
                     title: "ライト",
-                    subtitle: canGiveSunlight ? "日光 +14%" : "今日は完了",
+                    subtitle: sunlightSubtitle,
                     systemImage: "lightbulb.fill",
                     tint: .orange,
                     isEnabled: canGiveSunlight,
@@ -57,7 +63,7 @@ struct ActionButtonsView: View {
 
                 ActionCard(
                     title: "肥料",
-                    subtitle: canFeed ? "栄養 +7%" : "今日は完了",
+                    subtitle: feedSubtitle,
                     systemImage: "leaf.fill",
                     tint: .green,
                     isEnabled: canFeed,

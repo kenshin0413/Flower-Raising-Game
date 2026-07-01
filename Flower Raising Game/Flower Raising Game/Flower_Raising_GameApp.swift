@@ -7,6 +7,7 @@
 
 import SwiftUI
 import FirebaseCore
+import GoogleMobileAds
 
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(
@@ -15,6 +16,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     ) -> Bool {
         FirebaseApp.configure()
         LocalNotificationService.shared.configure()
+        MobileAds.shared.start()
         return true
     }
 }
@@ -25,7 +27,7 @@ struct Flower_Raising_GameApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            SplashRootView()
         }
     }
 }
