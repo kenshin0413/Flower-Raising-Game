@@ -7,6 +7,7 @@ struct CurrentWeather {
     let temperature: Double
     let humidity: Double
     let windSpeed: Double
+    let precipitation: Double
     let isDay: Bool
 }
 
@@ -22,7 +23,7 @@ final class OpenMeteoWeatherService: WeatherServicing {
         components?.queryItems = [
             URLQueryItem(name: "latitude", value: "\(coordinate.latitude)"),
             URLQueryItem(name: "longitude", value: "\(coordinate.longitude)"),
-            URLQueryItem(name: "current", value: "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,is_day"),
+            URLQueryItem(name: "current", value: "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,precipitation,is_day"),
             URLQueryItem(name: "timezone", value: "auto")
         ]
 
@@ -40,7 +41,8 @@ final class OpenMeteoWeatherService: WeatherServicing {
         let decoded = try JSONDecoder().decode(OpenMeteoResponse.self, from: data)
         let weatherType = Self.weatherType(
             weatherCode: decoded.current.weatherCode,
-            windSpeed: decoded.current.windSpeed
+            windSpeed: decoded.current.windSpeed,
+            precipitation: decoded.current.precipitation
         )
 
         return CurrentWeather(
@@ -48,26 +50,23 @@ final class OpenMeteoWeatherService: WeatherServicing {
             temperature: decoded.current.temperature,
             humidity: decoded.current.humidity,
             windSpeed: decoded.current.windSpeed,
+            precipitation: decoded.current.precipitation,
             isDay: decoded.current.isDay == 1
         )
     }
 
-    private static func weatherType(weatherCode: Int, windSpeed: Double) -> WeatherType {
-        if windSpeed >= 35 {
-            return .windy
-        }
-
+    private static func weatherType(weatherCode: Int, windSpeed: Double, precipitation: Double) -> WeatherType {
         switch weatherCode {
         case 0, 1:
-            return .sunny
+            return windSpeed >= 35 ? .windy : .sunny
         case 2, 3, 45, 48:
-            return .cloudy
+            return precipitation > 0.2 ? .rainy : (windSpeed >= 35 ? .windy : .cloudy)
         case 51...67, 80...82, 85...86:
             return .rainy
         case 95...99:
             return .stormy
         default:
-            return .cloudy
+            return windSpeed >= 35 ? .windy : .cloudy
         }
     }
 }
@@ -81,6 +80,7 @@ private struct OpenMeteoCurrent: Decodable {
     let humidity: Double
     let weatherCode: Int
     let windSpeed: Double
+    let precipitation: Double
     let isDay: Int
 
     enum CodingKeys: String, CodingKey {
@@ -88,6 +88,7 @@ private struct OpenMeteoCurrent: Decodable {
         case humidity = "relative_humidity_2m"
         case weatherCode = "weather_code"
         case windSpeed = "wind_speed_10m"
+        case precipitation
         case isDay = "is_day"
     }
 }

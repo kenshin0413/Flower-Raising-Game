@@ -5,50 +5,141 @@ import SwiftUI
 /// ViewはこのViewModelの値を表示し、ボタン操作をViewModelへ伝えるだけにします。
 @MainActor
 final class FlowerGardenViewModel: ObservableObject {
+    private enum CareAction {
+        case water
+        case sunlight
+        case fertilizer
+    }
+
     @Published private(set) var flower: FlowerState
     @Published var selectedWeather: WeatherType
     @Published private(set) var lastTimeMessage: String = "今日も少しずつ育てましょう"
     @Published private(set) var currentTemperature: Double?
     @Published private(set) var currentHumidity: Double?
     @Published private(set) var currentWindSpeed: Double?
+    @Published private(set) var currentPrecipitation: Double?
     @Published private(set) var isCurrentWeatherDaytime: Bool = true
+    @Published private(set) var bloomRecords: [PlantBloomRecord]
+    @Published private(set) var storedGachaPlantIDs: Set<String>
+    @Published private(set) var storedGachaVaseIDs: Set<String>
+    @Published private(set) var gachaTicketCount: Int
+    @Published private(set) var isDailyGachaTicketRewardPresented = false
+    @Published private(set) var isBloomBonusRewardPresented = false
 
     private let storageService: FlowerStorageServicing
+    private let encyclopediaStorageService: PlantEncyclopediaStorageServicing
     private let weatherService: WeatherServicing
     private let locationService: LocationService
     private var isRefreshingRealWeather = false
+    private var midnightRefreshTask: Task<Void, Never>?
+    private let storedGachaPlantIDsKey = "stored_gacha_plant_ids_v1"
+    private let storedGachaVaseIDsKey = "stored_gacha_vase_ids_v1"
+    private let migratedLegacyGachaVaseIDsKey = "migrated_legacy_gacha_vase_ids_v1"
+    private let repairedLegacyGachaVaseIDsKey = "repaired_legacy_gacha_vase_ids_v2"
+    private let gachaTicketCountKey = "gacha_ticket_count_v1"
+    private let lastGachaTicketGrantedAtKey = "last_gacha_ticket_granted_at_v1"
+    private let rewardedAdPromptSeenKey = "rewarded_ad_prompt_seen_v1"
+    private let rewardedWaterUsedAtKey = "rewarded_water_used_at_v1"
+    private let rewardedSunlightUsedAtKey = "rewarded_sunlight_used_at_v1"
+    private let rewardedFertilizerUsedAtKey = "rewarded_fertilizer_used_at_v1"
+    private let rewardedGachaTicketGrantedAtKey = "rewarded_gacha_ticket_granted_at_v1"
+    private let roseSunlightUnlockCountKey = "rose_sunlight_unlock_count_v1"
+    private let roseSunlightUnlockRequirement = 5
+    private let freeSeedGachaUsedKey = "free_seed_gacha_used_v1"
+    private let freeVaseGachaUsedKey = "free_vase_gacha_used_v1"
+    private let gachaTicketCost = 10
+    private let initialUnlockedVaseIDs: Set<String> = [VaseStyleCatalog.defaultVaseID, "terracotta"]
 
     init(
         storageService: FlowerStorageServicing = FlowerStorageService(),
+        encyclopediaStorageService: PlantEncyclopediaStorageServicing = PlantEncyclopediaStorageService(),
         weatherService: WeatherServicing = OpenMeteoWeatherService(),
         locationService: LocationService = LocationService()
     ) {
         self.storageService = storageService
+        self.encyclopediaStorageService = encyclopediaStorageService
         self.weatherService = weatherService
         self.locationService = locationService
 
-        let savedFlower = storageService.loadFlower() ?? FlowerState.initial
+        var savedFlower = storageService.loadFlower() ?? FlowerState.initial
+        savedFlower.plantedAt = savedFlower.plantedAt ?? savedFlower.lastOpenedAt
+        savedFlower.vaseID = savedFlower.vaseID ?? VaseStyleCatalog.defaultVaseID
+        savedFlower.openedDayCount = max(savedFlower.openedDayCount ?? 1, 1)
+        savedFlower.lastOpenedDayCountedAt = savedFlower.lastOpenedDayCountedAt ?? savedFlower.lastOpenedAt
+        let loadedBloomRecords = encyclopediaStorageService.loadRecords()
         self.flower = savedFlower
+        self.bloomRecords = loadedBloomRecords
+        var storedPlantIDs = Self.loadStoredIDs(
+            key: storedGachaPlantIDsKey,
+            fallback: Set([PlantSpeciesCatalog.defaultPlantID])
+        )
+        self.storedGachaPlantIDs = storedPlantIDs
+        var storedVaseIDs = Self.loadStoredIDs(
+            key: storedGachaVaseIDsKey,
+            fallback: initialUnlockedVaseIDs
+        )
+        storedVaseIDs.formUnion(initialUnlockedVaseIDs)
+        if UserDefaults.standard.bool(forKey: migratedLegacyGachaVaseIDsKey),
+           !UserDefaults.standard.bool(forKey: repairedLegacyGachaVaseIDsKey) {
+            storedVaseIDs = initialUnlockedVaseIDs
+            UserDefaults.standard.set(true, forKey: repairedLegacyGachaVaseIDsKey)
+        }
+        self.storedGachaVaseIDs = storedVaseIDs
+        self.gachaTicketCount = UserDefaults.standard.integer(forKey: gachaTicketCountKey)
+        UserDefaults.standard.set(Array(storedPlantIDs).sorted(), forKey: storedGachaPlantIDsKey)
+        UserDefaults.standard.set(Array(storedVaseIDs).sorted(), forKey: storedGachaVaseIDsKey)
         self.selectedWeather = savedFlower.selectedWeather
         self.currentHumidity = savedFlower.lastHumidity
         self.currentWindSpeed = savedFlower.lastWindSpeed
+        self.currentPrecipitation = savedFlower.lastPrecipitation
+
+        if !isVaseUnlocked(selectedVaseStyle) {
+            flower.vaseID = VaseStyleCatalog.defaultVaseID
+            UserDefaults.standard.set(Array(storedGachaVaseIDs).sorted(), forKey: storedGachaVaseIDsKey)
+            storageService.saveFlower(flower)
+        }
+
+        if self.flower.growth >= 100, self.flower.bloomRecordedAt == nil {
+            recordBloomIfNeeded()
+        }
+        if self.flower.growth >= 100,
+           self.flower.bloomRecordedAt != nil,
+           self.flower.bloomBonusResolvedAt == nil {
+            self.isBloomBonusRewardPresented = true
+        }
 
         applyOfflineProgressIfNeeded()
 
         Task {
             await refreshRealWeather()
         }
+
+        recordAppOpenedToday()
+        scheduleMidnightRefresh()
+    }
+
+    deinit {
+        midnightRefreshTask?.cancel()
+    }
+
+    private static func loadStoredIDs(key: String, fallback: Set<String>) -> Set<String> {
+        let stored = UserDefaults.standard.stringArray(forKey: key) ?? []
+        return fallback.union(stored)
+    }
+
+    private func saveStoredIDs(_ ids: Set<String>, key: String) {
+        UserDefaults.standard.set(Array(ids).sorted(), forKey: key)
+    }
+
+    private func hasUsedRewardedCareToday(key: String) -> Bool {
+        guard let usedAt = UserDefaults.standard.object(forKey: key) as? Date else {
+            return false
+        }
+
+        return isDateInToday(usedAt)
     }
 
     var stageName: String {
-        if isDead {
-            return "枯れ状態"
-        }
-
-        if isWilted {
-            return "しおれ気味"
-        }
-
         return flower.growthStage.displayName
     }
 
@@ -58,35 +149,288 @@ final class FlowerGardenViewModel: ObservableObject {
 
     var plantImageName: String? {
         let stageNumber = plantStageNumber(for: flower.growth)
+        return selectedPlantSpecies.imageName(
+            for: stageNumber,
+            isWilted: isWilted,
+            isDead: isDead
+        )
+    }
 
-        if isDead, stageNumber > 1 {
-            let deadStageNumber = stageNumber == 4 ? 3 : stageNumber
-            return String(format: "dead_stage_%02d", deadStageNumber)
+    var availablePlantSpecies: [PlantSpecies] {
+        PlantSpeciesCatalog.all
+    }
+
+    func isPlantUnlocked(_ plant: PlantSpecies) -> Bool {
+        if storedGachaPlantIDs.contains(plant.id) {
+            return true
         }
 
-        if isWilted, stageNumber > 1 {
-            return String(format: "wilted_stage_%02d", stageNumber)
+        if plant.id == "rose" {
+            return roseSunlightUnlockCount >= roseSunlightUnlockRequirement
         }
 
-        return String(format: "growth_stage_%02d", stageNumber)
+        guard plant.id == "morning-glory" else {
+            return plant.id == PlantSpeciesCatalog.defaultPlantID
+        }
+
+        return currentOpenedDayCount >= 10
+    }
+
+    var selectedPlantSpecies: PlantSpecies {
+        PlantSpeciesCatalog.plant(for: flower.plantID)
+    }
+
+    var roseSunlightUnlockCount: Int {
+        UserDefaults.standard.integer(forKey: roseSunlightUnlockCountKey)
+    }
+
+    var availableVaseStyles: [VaseStyle] {
+        VaseStyleCatalog.all
+    }
+
+    var selectedVaseStyle: VaseStyle {
+        VaseStyleCatalog.vase(for: flower.vaseID)
+    }
+
+    var waterIdealRange: ClosedRange<Double> {
+        selectedPlantSpecies.preference.idealWater
+    }
+
+    var sunlightIdealRange: ClosedRange<Double> {
+        selectedPlantSpecies.preference.idealSunlight
+    }
+
+    var nutritionIdealRange: ClosedRange<Double> {
+        selectedPlantSpecies.preference.idealNutrition
+    }
+
+    var stressIdealRange: ClosedRange<Double> {
+        0...max(18, selectedVaseStyle.effect.stressResistance >= 1.08 ? 30 : 27)
+    }
+
+    var pestDamageIdealRange: ClosedRange<Double> {
+        0...24
+    }
+
+    var deathRiskIdealRange: ClosedRange<Double> {
+        0...max(24, selectedVaseStyle.effect.stressResistance >= 1.08 ? 38 : 34)
+    }
+
+    var plantPreferenceSummaryText: String {
+        selectedPlantSpecies.preference.summary
+    }
+
+    var vaseEffectSummaryText: String {
+        selectedVaseStyle.effect.summary
+    }
+
+    func isVaseUnlocked(_ vase: VaseStyle) -> Bool {
+        if storedGachaVaseIDs.contains(vase.id) {
+            return true
+        }
+
+        if vase.id == "blue-gloss" {
+            return currentOpenedDayCount >= 15
+        }
+
+        return false
+    }
+
+    var plantStageNumber: Int {
+        plantStageNumber(for: flower.growth)
+    }
+
+    func selectVaseStyle(_ vase: VaseStyle) {
+        guard isVaseUnlocked(vase) else {
+            lastTimeMessage = vase.id == "blue-gloss"
+                ? "青い陶器は15日間アプリを開くか、鉢箱で解放できます"
+                : "\(vase.name)は鉢箱で解放できます"
+            return
+        }
+
+        guard flower.vaseID != vase.id else {
+            return
+        }
+
+        flower.vaseID = vase.id
+        lastTimeMessage = "\(vase.name)に変更しました"
+        saveCurrentState()
+    }
+
+    func storeGachaPlantResult(_ plant: PlantSpecies) {
+        guard storedGachaPlantIDs.insert(plant.id).inserted else {
+            return
+        }
+
+        saveStoredIDs(storedGachaPlantIDs, key: storedGachaPlantIDsKey)
+        lastTimeMessage = "\(plant.name)を保管しました"
+    }
+
+    func storeGachaVaseResult(_ vase: VaseStyle) {
+        guard storedGachaVaseIDs.insert(vase.id).inserted else {
+            return
+        }
+
+        saveStoredIDs(storedGachaVaseIDs, key: storedGachaVaseIDsKey)
+        lastTimeMessage = "\(vase.name)を保管しました"
+    }
+
+    var gachaTicketText: String {
+        "\(gachaTicketCount)枚"
+    }
+
+    var gachaTicketCostText: String {
+        "\(gachaTicketCost)枚"
+    }
+
+    var gachaTicketShortfallText: String {
+        "\(max(gachaTicketCost - gachaTicketCount, 0))枚"
+    }
+
+    func isFirstGachaFree(isSeed: Bool) -> Bool {
+        !UserDefaults.standard.bool(forKey: isSeed ? freeSeedGachaUsedKey : freeVaseGachaUsedKey)
+    }
+
+    var canWatchAdForGachaTicketToday: Bool {
+        !hasUsedRewardedCareToday(key: rewardedGachaTicketGrantedAtKey)
+    }
+
+    var rewardedGachaTicketButtonTitle: String {
+        canWatchAdForGachaTicketToday ? "広告を見てチケット+1" : "広告チケット受け取り済み"
+    }
+
+    var rewardedGachaTicketMessage: String {
+        canWatchAdForGachaTicketToday
+            ? "ログイン報酬とは別に、1日1枚だけ広告で受け取れます"
+            : "広告チケットは明日0時にまた受け取れます"
+    }
+
+    func canOpenGacha(isSeed: Bool) -> Bool {
+        isFirstGachaFree(isSeed: isSeed) || gachaTicketCount >= gachaTicketCost
+    }
+
+    func consumeGachaTicketsForDraw(isSeed: Bool) -> Bool {
+        if isFirstGachaFree(isSeed: isSeed) {
+            UserDefaults.standard.set(true, forKey: isSeed ? freeSeedGachaUsedKey : freeVaseGachaUsedKey)
+            return true
+        }
+
+        guard canOpenGacha(isSeed: isSeed) else {
+            lastTimeMessage = "チケットは\(gachaTicketCost)枚で1回開封できます"
+            return false
+        }
+
+        gachaTicketCount -= gachaTicketCost
+        UserDefaults.standard.set(gachaTicketCount, forKey: gachaTicketCountKey)
+        return true
+    }
+
+    func grantRewardedGachaTicket() -> Bool {
+        guard canWatchAdForGachaTicketToday else {
+            lastTimeMessage = "広告チケットは今日は受け取り済みです"
+            return false
+        }
+
+        gachaTicketCount += 1
+        UserDefaults.standard.set(gachaTicketCount, forKey: gachaTicketCountKey)
+        UserDefaults.standard.set(Date(), forKey: rewardedGachaTicketGrantedAtKey)
+        lastTimeMessage = "広告でガチャチケットを1枚受け取りました"
+        return true
+    }
+
+    func dismissBloomBonusReward() {
+        guard isBloomBonusRewardPresented else {
+            return
+        }
+
+        flower.bloomBonusResolvedAt = Date()
+        isBloomBonusRewardPresented = false
+        lastTimeMessage = "開花記念ボーナスは見送りました"
+        saveCurrentState()
+    }
+
+    func grantBloomBonusReward() -> Bool {
+        guard isBloomBonusRewardPresented,
+              isFullyBloomed,
+              flower.bloomRecordedAt != nil,
+              flower.bloomBonusResolvedAt == nil else {
+            return false
+        }
+
+        gachaTicketCount += 5
+        UserDefaults.standard.set(gachaTicketCount, forKey: gachaTicketCountKey)
+        flower.bloomBonusResolvedAt = Date()
+        isBloomBonusRewardPresented = false
+        lastTimeMessage = "開花記念でガチャチケットを5枚受け取りました"
+        saveCurrentState()
+        return true
+    }
+
+    func dismissDailyGachaTicketReward() {
+        isDailyGachaTicketRewardPresented = false
+    }
+
+    func needsPlantChangeConfirmation(for plant: PlantSpecies) -> Bool {
+        flower.plantID != plant.id && flower.growth >= 0.1 && !isDead && !isFullyBloomed
+    }
+
+    func selectPlantSpecies(_ plant: PlantSpecies) {
+        guard isPlantUnlocked(plant) else {
+            lastTimeMessage = lockedPlantMessage(for: plant)
+            return
+        }
+
+        if isDead || isFullyBloomed {
+            replaceCurrentPlantWithNewSeed(plant)
+            return
+        }
+
+        guard flower.plantID != plant.id else {
+            return
+        }
+
+        flower.plantID = plant.id
+        lastTimeMessage = "\(plant.name)を育てます"
+        saveCurrentState()
+    }
+
+    func replaceCurrentPlantWithNewSeed(_ plant: PlantSpecies) {
+        guard isPlantUnlocked(plant) else {
+            lastTimeMessage = lockedPlantMessage(for: plant)
+            return
+        }
+
+        let selectedVaseID = flower.vaseID
+        flower = FlowerState.initial
+        flower.plantID = plant.id
+        flower.vaseID = selectedVaseID ?? VaseStyleCatalog.defaultVaseID
+        flower.plantedAt = Date()
+        flower.bloomRecordedAt = nil
+        selectedWeather = flower.selectedWeather
+        lastTimeMessage = "\(plant.name)を育て始めました"
+        saveCurrentState()
+    }
+
+    private func lockedPlantMessage(for plant: PlantSpecies) -> String {
+        switch plant.id {
+        case "rose":
+            return "バラはライトを\(roseSunlightUnlockRequirement)回使うか、種袋で解放できます"
+        case "morning-glory":
+            return "朝顔は10日間アプリを開くか、種袋で解放できます"
+        default:
+            return "\(plant.name)は種袋で解放できます"
+        }
     }
 
     var growthPercentText: String {
-        "\(Int(flower.growth))%"
+        let growth = clamped(flower.growth)
+        let displayGrowth = growth > 0 && growth < 0.1 ? 0.1 : floor(growth * 10) / 10
+
+        return String(format: "%.1f%%", displayGrowth)
     }
 
-    var visualStageProgressPercent: Double {
-        let stageNumber = plantStageNumber(for: flower.growth)
-
-        guard stageNumber < 10 else {
-            return 100
-        }
-
-        let lowerBoundary = visualStageLowerBoundary(for: stageNumber)
-        let upperBoundary = visualStageLowerBoundary(for: stageNumber + 1)
-        let progress = (flower.growth - lowerBoundary) / (upperBoundary - lowerBoundary) * 100
-
-        return clamped(progress)
+    var growthProgressPercent: Double {
+        Double(displayGrowthPercent)
     }
 
     var stressPercent: Double {
@@ -101,6 +445,10 @@ final class FlowerGardenViewModel: ObservableObject {
         return clamped(max(wiltProgress + fatalProgress, currentConditionPressure))
     }
 
+    var pestDamagePercent: Double {
+        clamped(flower.pestDamage ?? 0)
+    }
+
     var deathRiskPercent: Double {
         if isDead {
             return 100
@@ -109,7 +457,8 @@ final class FlowerGardenViewModel: ObservableObject {
         let conditionRisk = min(conditionStressScore / 6, 1) * 25
         let wiltRisk = min(currentStressHours / 24, 1) * 30
         let fatalRisk = min(currentFatalStressHours / 48, 1) * 70
-        let rawRisk = conditionRisk + fatalRisk + (currentStressHours >= 18 ? wiltRisk : wiltRisk * 0.35)
+        let pestRisk = max(pestDamagePercent - 55, 0) * 0.28
+        let rawRisk = conditionRisk + fatalRisk + pestRisk + (currentStressHours >= 18 ? wiltRisk : wiltRisk * 0.35)
 
         return clamped(rawRisk)
     }
@@ -162,11 +511,63 @@ final class FlowerGardenViewModel: ObservableObject {
     }
 
     var canGiveSunlightToday: Bool {
-        !isDead && !hasUsedToday(flower.lastSunlightAt)
+        false
     }
 
     var canFeedToday: Bool {
         !isDead && !hasUsedToday(flower.lastFedAt)
+    }
+
+    var shouldShowRewardedAdPrompt: Bool {
+        !UserDefaults.standard.bool(forKey: rewardedAdPromptSeenKey)
+    }
+
+    var canWatchAdForWaterToday: Bool {
+        !isDead && hasUsedToday(flower.lastWateredAt) && !hasUsedRewardedCareToday(key: rewardedWaterUsedAtKey)
+    }
+
+    var canWatchAdForSunlightToday: Bool {
+        !isDead && !hasUsedRewardedCareToday(key: rewardedSunlightUsedAtKey)
+    }
+
+    var canWatchAdForFertilizerToday: Bool {
+        !isDead && hasUsedToday(flower.lastFedAt) && !hasUsedRewardedCareToday(key: rewardedFertilizerUsedAtKey)
+    }
+
+    var canTapWaterAction: Bool {
+        canWaterToday || canWatchAdForWaterToday
+    }
+
+    var canTapSunlightAction: Bool {
+        canWatchAdForSunlightToday
+    }
+
+    var canTapFeedAction: Bool {
+        canFeedToday || canWatchAdForFertilizerToday
+    }
+
+    var waterActionSubtitle: String {
+        if canWaterToday {
+            return "水分 +4.5%"
+        }
+
+        return canWatchAdForWaterToday ? "広告で+1回" : "今日は完了"
+    }
+
+    var sunlightActionSubtitle: String {
+        canWatchAdForSunlightToday ? "広告で1回" : "今日は完了"
+    }
+
+    var feedActionSubtitle: String {
+        if canFeedToday {
+            return "栄養 +3.5%"
+        }
+
+        return canWatchAdForFertilizerToday ? "広告で+1回" : "今日は完了"
+    }
+
+    var isFullyBloomed: Bool {
+        flower.growth >= 100
     }
 
     var careStreakText: String {
@@ -174,11 +575,11 @@ final class FlowerGardenViewModel: ObservableObject {
     }
 
     var isWilted: Bool {
-        !isDead && currentStressHours >= 24
+        return !isDead && currentStressHours >= 24
     }
 
     var isDead: Bool {
-        currentFatalStressHours >= 48 || currentStressHours >= 96
+        return currentFatalStressHours >= 48 || currentStressHours >= 96
     }
 
     var careAdviceText: String {
@@ -186,74 +587,106 @@ final class FlowerGardenViewModel: ObservableObject {
             return "枯れてしまいました。植え替えて新しく育てましょう"
         }
 
+        if isFullyBloomed {
+            return "きれいに開花しました。植え替えると新しい花を育てられます"
+        }
+
         if currentFatalStressHours >= 24 {
-            return "危険な状態が続いています。まず水分・日光・栄養を適正に戻しましょう"
+            return "危険です。\(selectedPlantSpecies.name)の好みに近い環境へ戻そう"
         }
 
         if isWilted {
-            return "しおれています。良い状態を保つと少しずつ回復します"
+            return "しおれ中。まず不足ゲージを直して、1日安定させよう"
         }
 
         if flower.water >= 96 {
-            return "水分が多すぎます。根腐れしやすい状態です"
+            return "水分過多です。水やりは止めて、日光55%以上を保とう"
         }
 
         if flower.nutrition >= 96 {
-            return "栄養が多すぎます。肥料焼けに注意してください"
+            return "栄養過多です。肥料は止めて、水分45-90%を保とう"
         }
 
         if flower.water < 20 {
-            return "水分がかなり不足しています。乾燥で弱りやすい状態です"
+            if canWaterToday {
+                return "水やりで水分\(Int(waterIdealRange.lowerBound))%以上へ。\(selectedPlantSpecies.name)は\(selectedPlantSpecies.preference.summary)"
+            }
+
+            return canWatchAdForWaterToday ? "広告を見ると今日もう一度だけ水やりできます" : "水分不足です。明日0時に水やりして\(Int(waterIdealRange.lowerBound))%以上へ"
         }
 
         if flower.sunlight < 42 {
-            return "日光不足で成長が止まっています"
+            return canWatchAdForSunlightToday ? "広告を見ると今日一度だけライトを使えます" : "日光不足です。今日は水分と栄養を維持しよう"
         }
 
         if flower.sunlight < 55 {
-            return "日光不足で成長がかなり遅くなっています"
+            return canWatchAdForSunlightToday ? "日光\(Int(sunlightIdealRange.lowerBound))%以上が目標。広告ライトを使うと育ちやすいです" : "日光\(Int(sunlightIdealRange.lowerBound))%以上が目標。今日は水分と栄養を維持しよう"
         }
 
         if flower.nutrition < 25 {
-            return "栄養不足で成長しにくくなっています"
+            if canFeedToday {
+                return "肥料で栄養\(Int(nutritionIdealRange.lowerBound))%以上へ。\(selectedVaseStyle.name)は\(selectedVaseStyle.effect.summary)"
+            }
+
+            return canWatchAdForFertilizerToday ? "広告を見ると今日もう一度だけ肥料をあげられます" : "栄養不足です。明日0時に肥料で\(Int(nutritionIdealRange.lowerBound))%以上へ"
+        }
+
+        if pestDamagePercent >= 55 {
+            return "虫害が広がっています。水やり・ライト・肥料で状態を整えると少し落ち着きます"
+        }
+
+        if isPestRiskWeather {
+            return "高温で虫が出やすい天気です。虫害ゲージが上がりすぎないように注意"
         }
 
         if deathRiskPercent >= 45 {
-            return "枯れリスクが高めです。過不足のあるゲージを整えましょう"
+            return "枯れリスク高め。\(selectedPlantSpecies.name)の理想環境へ近づけよう"
         }
 
         if stressPercent >= 28 {
-            return "ストレスが高く、成長が止まっています"
+            return "ストレス高め。過不足を直して、今日は追加しすぎないようにしよう"
         }
 
         if flower.selectedWeather == .stormy {
-            return "嵐の影響でストレスが溜まりやすい天気です"
+            return "嵐の日は水分90%超えに注意。日光55%以上を優先しよう"
         }
 
         if flower.selectedWeather == .windy || (flower.lastWindSpeed ?? 0) >= 24 {
-            return "風が強く、水分が抜けやすい状態です"
+            return canWaterToday ? "風で乾きやすいです。水分55-88%を目標に水やりを判断" : "風で乾きやすいです。水分45%以上を維持しよう"
         }
 
         if let humidity = flower.lastHumidity {
             if humidity < 35 {
-                return "空気が乾燥していて、水分が減りやすい状態です"
+                return canWaterToday ? "乾燥中。水分55-88%を目標に水やりしよう" : "乾燥中。水分45%以上を切らないように注意"
             }
 
             if humidity >= 90 {
-                return "湿度が高く、土が乾きにくい状態です"
+                return "湿度高め。水分90%超えなら水やりは控えよう"
             }
         }
 
         if !isCurrentWeatherDaytime {
-            return "夜の間は日光が増えません"
+            return canWatchAdForSunlightToday ? "夜は自然日光なし。広告ライトで55%以上を狙えます" : "夜は水分55-88%・栄養55-90%を維持しよう"
         }
 
-        return "育成環境は安定しています"
+        if selectedPlantSpecies.preference.preferredWeather.contains(flower.selectedWeather) {
+            return "\(selectedPlantSpecies.name)向きの天気です。\(selectedPlantSpecies.preference.careHint)"
+        }
+
+        return "順調です。\(selectedPlantSpecies.preference.careHint)"
     }
 
     var careAdviceSystemImage: String {
         if isDead {
             return "xmark.circle.fill"
+        }
+
+        if isFullyBloomed {
+            return "sparkles"
+        }
+
+        if pestDamagePercent >= 55 || isPestRiskWeather {
+            return "ladybug.fill"
         }
 
         if currentFatalStressHours >= 24 || deathRiskPercent >= 45 {
@@ -288,6 +721,18 @@ final class FlowerGardenViewModel: ObservableObject {
             return .red
         }
 
+        if isFullyBloomed {
+            return .green
+        }
+
+        if pestDamagePercent >= 55 {
+            return .red
+        }
+
+        if isPestRiskWeather || pestDamagePercent >= 28 {
+            return .orange
+        }
+
         if isWilted || stressPercent >= 28 || flower.water >= 96 || flower.nutrition >= 96 {
             return .orange
         }
@@ -299,18 +744,131 @@ final class FlowerGardenViewModel: ObservableObject {
         return .green
     }
 
+    var waterStatusText: String? {
+        let preference = selectedPlantSpecies.preference
+
+        if flower.water > preference.viableWater.upperBound {
+            return "危険"
+        }
+
+        if flower.water > preference.idealWater.upperBound {
+            return "多い"
+        }
+
+        if flower.water < preference.viableWater.lowerBound {
+            return "危険"
+        }
+
+        if flower.water < preference.idealWater.lowerBound {
+            return "少ない"
+        }
+
+        return nil
+    }
+
+    var waterStatusColor: Color {
+        statusColor(for: waterStatusText)
+    }
+
+    var sunlightStatusText: String? {
+        let preference = selectedPlantSpecies.preference
+
+        if flower.sunlight > preference.viableSunlight.upperBound {
+            return "多い"
+        }
+
+        if flower.sunlight < preference.viableSunlight.lowerBound {
+            return "危険"
+        }
+
+        if flower.sunlight < preference.idealSunlight.lowerBound {
+            return "少ない"
+        }
+
+        return nil
+    }
+
+    var sunlightStatusColor: Color {
+        statusColor(for: sunlightStatusText)
+    }
+
+    var nutritionStatusText: String? {
+        let preference = selectedPlantSpecies.preference
+
+        if flower.nutrition > preference.viableNutrition.upperBound {
+            return "危険"
+        }
+
+        if flower.nutrition > preference.idealNutrition.upperBound {
+            return "多い"
+        }
+
+        if flower.nutrition < preference.viableNutrition.lowerBound {
+            return "危険"
+        }
+
+        if flower.nutrition < preference.idealNutrition.lowerBound {
+            return "少ない"
+        }
+
+        return nil
+    }
+
+    var nutritionStatusColor: Color {
+        statusColor(for: nutritionStatusText)
+    }
+
+    var stressStatusText: String? {
+        switch stressPercent {
+        case 55...:
+            return "危険"
+        case 28..<55:
+            return "高い"
+        default:
+            return nil
+        }
+    }
+
+    var stressStatusColor: Color {
+        statusColor(for: stressStatusText)
+    }
+
+    var pestDamageStatusText: String? {
+        switch pestDamagePercent {
+        case 60...:
+            return "危険"
+        case 30..<60:
+            return "注意"
+        default:
+            return nil
+        }
+    }
+
+    var pestDamageStatusColor: Color {
+        statusColor(for: pestDamageStatusText)
+    }
+
+    var deathRiskStatusText: String? {
+        switch deathRiskPercent {
+        case 65...:
+            return "危険"
+        case 35..<65:
+            return "注意"
+        default:
+            return nil
+        }
+    }
+
+    var deathRiskStatusColor: Color {
+        statusColor(for: deathRiskStatusText)
+    }
+
     func waterFlower() {
         guard canWaterToday, !isDead else {
             return
         }
 
-        flower.water = clamped(flower.water + 18)
-        flower.mood = clamped(flower.mood + 6)
-        flower.lastWateredAt = Date()
-        recordCareForToday()
-        recoverFromCare(stressHours: 8, fatalHours: 4)
-        growIfConditionsAreGood(baseAmount: 0.45)
-        saveCurrentState()
+        applyWaterCare()
     }
 
     func giveSunlight() {
@@ -318,14 +876,7 @@ final class FlowerGardenViewModel: ObservableObject {
             return
         }
 
-        flower.sunlight = clamped(flower.sunlight + 18)
-        flower.water = clamped(flower.water - 5)
-        flower.mood = clamped(flower.mood + 4)
-        flower.lastSunlightAt = Date()
-        recordCareForToday()
-        recoverFromCare(stressHours: 6, fatalHours: 3)
-        growIfConditionsAreGood(baseAmount: 0.70)
-        saveCurrentState()
+        applySunlightCare()
     }
 
     func feedFlower() {
@@ -333,12 +884,93 @@ final class FlowerGardenViewModel: ObservableObject {
             return
         }
 
-        flower.nutrition = clamped(flower.nutrition + 20)
+        applyFertilizerCare()
+    }
+
+    func markRewardedAdPromptSeen() {
+        UserDefaults.standard.set(true, forKey: rewardedAdPromptSeenKey)
+    }
+
+    func applyRewardedWaterCare() {
+        guard canWatchAdForWaterToday else {
+            return
+        }
+
+        UserDefaults.standard.set(Date(), forKey: rewardedWaterUsedAtKey)
+        applyWaterCare()
+        lastTimeMessage = "広告ボーナスで水やりをもう1回しました"
+    }
+
+    func applyRewardedSunlightCare() {
+        guard canWatchAdForSunlightToday else {
+            return
+        }
+
+        UserDefaults.standard.set(Date(), forKey: rewardedSunlightUsedAtKey)
+        let didUnlockRose = incrementRoseSunlightUnlockCount()
+        applySunlightCare()
+        lastTimeMessage = didUnlockRose
+            ? "ライトを\(roseSunlightUnlockRequirement)回使ったのでバラが解放されました"
+            : "広告ボーナスでライトを使いました"
+    }
+
+    private func incrementRoseSunlightUnlockCount() -> Bool {
+        guard !storedGachaPlantIDs.contains("rose"),
+              roseSunlightUnlockCount < roseSunlightUnlockRequirement else {
+            return false
+        }
+
+        let nextCount = min(roseSunlightUnlockCount + 1, roseSunlightUnlockRequirement)
+        UserDefaults.standard.set(nextCount, forKey: roseSunlightUnlockCountKey)
+
+        return nextCount >= roseSunlightUnlockRequirement
+    }
+
+    func applyRewardedFertilizerCare() {
+        guard canWatchAdForFertilizerToday else {
+            return
+        }
+
+        UserDefaults.standard.set(Date(), forKey: rewardedFertilizerUsedAtKey)
+        applyFertilizerCare()
+        lastTimeMessage = "広告ボーナスで肥料をもう1回あげました"
+    }
+
+    func applyPlantTapBonus() {
+        flower.water += 0.5
+        flower.sunlight += 0.5
+        flower.nutrition += 0.5
+        saveCurrentState()
+    }
+
+    private func applyWaterCare() {
+        flower.water = clamped(flower.water + 4.5 * selectedVaseStyle.effect.waterRetention)
+        flower.mood = clamped(flower.mood + 6)
+        flower.lastWateredAt = Date()
+        recordCareForToday()
+        recoverFromCare(stressHours: 8, fatalHours: 4)
+        growIfConditionsAreGood(baseAmount: 0.58, action: .water)
+        saveCurrentState()
+    }
+
+    private func applySunlightCare() {
+        flower.sunlight = clamped(flower.sunlight + 14 * selectedVaseStyle.effect.sunlightModifier)
+        flower.water = clamped(flower.water - 5 / selectedVaseStyle.effect.waterRetention)
+        flower.mood = clamped(flower.mood + 4)
+        flower.lastSunlightAt = Date()
+        recordCareForToday()
+        recoverFromCare(stressHours: 6, fatalHours: 3)
+        growIfConditionsAreGood(baseAmount: 0.66, action: .sunlight)
+        saveCurrentState()
+    }
+
+    private func applyFertilizerCare() {
+        flower.nutrition = clamped(flower.nutrition + 3.5 * selectedVaseStyle.effect.nutritionEfficiency)
         flower.mood = clamped(flower.mood + 4)
         flower.lastFedAt = Date()
         recordCareForToday()
         recoverFromCare(stressHours: 9, fatalHours: 4)
-        growIfConditionsAreGood(baseAmount: 0.55)
+        growIfConditionsAreGood(baseAmount: 0.60, action: .fertilizer)
         saveCurrentState()
     }
 
@@ -352,6 +984,7 @@ final class FlowerGardenViewModel: ObservableObject {
     }
 
     func applyElapsedTimeIfNeeded() {
+        recordAppOpenedToday()
         applyOfflineProgressIfNeeded()
     }
 
@@ -372,11 +1005,15 @@ final class FlowerGardenViewModel: ObservableObject {
             currentTemperature = currentWeather.temperature
             currentHumidity = currentWeather.humidity
             currentWindSpeed = currentWeather.windSpeed
+            currentPrecipitation = currentWeather.precipitation
             isCurrentWeatherDaytime = currentWeather.isDay
             selectedWeather = currentWeather.type
             flower.selectedWeather = currentWeather.type
+            flower.lastTemperature = currentWeather.temperature
             flower.lastHumidity = currentWeather.humidity
             flower.lastWindSpeed = currentWeather.windSpeed
+            flower.lastPrecipitation = currentWeather.precipitation
+            updatePestDamage(hours: 1, daytimeHours: currentWeather.isDay ? 1 : 0)
 
             saveCurrentState()
         } catch {
@@ -393,79 +1030,45 @@ final class FlowerGardenViewModel: ObservableObject {
 
         switch weather {
         case .sunny:
-            flower.sunlight = clamped(flower.sunlight + 22)
-            flower.water = clamped(flower.water - 8)
+            applySunlightChange(22)
+            applyWaterChange(-8)
             flower.mood = clamped(flower.mood + 6)
             growIfConditionsAreGood(baseAmount: 0.65)
         case .cloudy:
-            flower.sunlight = clamped(flower.sunlight + 8)
-            flower.water = clamped(flower.water - 2)
+            applySunlightChange(8)
+            applyWaterChange(-2)
             flower.mood = clamped(flower.mood + 1)
             growIfConditionsAreGood(baseAmount: 0.2)
         case .rainy:
-            flower.water = clamped(flower.water + 22)
-            flower.sunlight = clamped(flower.sunlight - 5)
+            applyWaterChange(22)
+            applySunlightChange(-5)
             flower.mood = clamped(flower.mood + 2)
             growIfConditionsAreGood(baseAmount: 0.3)
         case .stormy:
-            flower.water = clamped(flower.water + 12)
-            flower.sunlight = clamped(flower.sunlight - 10)
-            flower.mood = clamped(flower.mood - 18)
+            applyWaterChange(12)
+            applySunlightChange(-10)
+            flower.mood = clamped(flower.mood - 18 / selectedVaseStyle.effect.stressResistance)
             growIfConditionsAreGood(baseAmount: 0.05)
         case .windy:
-            flower.water = clamped(flower.water - 6)
-            flower.mood = clamped(flower.mood - 10)
+            applyWaterChange(-6)
+            flower.mood = clamped(flower.mood - 10 / selectedVaseStyle.effect.stressResistance)
             growIfConditionsAreGood(baseAmount: 0.08)
         }
 
         updateStressFromCurrentCondition(hours: 3)
+        updatePestDamage(hours: 3, daytimeHours: isCurrentWeatherDaytime ? 3 : 0)
     }
 
     func resetFlower() {
+        let selectedPlantID = flower.plantID
+        let selectedVaseID = flower.vaseID
         flower = FlowerState.initial
+        flower.plantID = selectedPlantID ?? PlantSpeciesCatalog.defaultPlantID
+        flower.vaseID = selectedVaseID ?? VaseStyleCatalog.defaultVaseID
+        flower.plantedAt = Date()
+        flower.bloomRecordedAt = nil
         selectedWeather = flower.selectedWeather
         lastTimeMessage = "新しい花を育て始めました"
-        saveCurrentState()
-    }
-
-    func forceWiltForTesting() {
-        // 0%は鉢だけなので、しおれ画像を確認できる最低限の成長度まで進めます。
-        flower.growth = max(flower.growth, 12)
-        flower.water = min(flower.water, 12)
-        flower.sunlight = min(flower.sunlight, 12)
-        flower.nutrition = min(flower.nutrition, 12)
-        flower.mood = min(flower.mood, 18)
-        flower.stressHours = 24
-        flower.fatalStressHours = 0
-        saveCurrentState()
-    }
-
-    func forceDeadForTesting() {
-        // 0%は鉢だけなので、枯れ画像を確認できる最低限の成長度まで進めます。
-        flower.growth = max(flower.growth, 12)
-        flower.water = min(flower.water, 5)
-        flower.sunlight = min(flower.sunlight, 8)
-        flower.nutrition = min(flower.nutrition, 5)
-        flower.mood = min(flower.mood, 8)
-        flower.stressHours = 96
-        flower.fatalStressHours = 48
-        saveCurrentState()
-    }
-
-    func forceGrowForTesting() {
-        flower.growth = clamped(flower.growth + 11)
-        flower.water = max(flower.water, 60)
-        flower.sunlight = max(flower.sunlight, 60)
-        flower.nutrition = max(flower.nutrition, 60)
-        flower.mood = max(flower.mood, 70)
-        flower.stressHours = 0
-        flower.fatalStressHours = 0
-        saveCurrentState()
-    }
-
-    func resetTestState() {
-        flower = FlowerState.initial
-        selectedWeather = flower.selectedWeather
         saveCurrentState()
     }
 
@@ -486,32 +1089,45 @@ final class FlowerGardenViewModel: ObservableObject {
 
         let simulatedHours = min(elapsedHours, 168)
         let simulatedStart = now.addingTimeInterval(-simulatedHours * 3600)
-        let weatherHours = weatherElapsedHours(from: simulatedStart, to: now)
-
-        // アプリを閉じている間も、直近で取得した現実の天気に合わせて状態を変化させます。
-        applyHourlyWeatherEffect(
-            weather: flower.selectedWeather,
-            daytimeHours: weatherHours.daytime,
-            nighttimeHours: weatherHours.nighttime,
-            humidity: flower.lastHumidity,
-            windSpeed: flower.lastWindSpeed
-        )
-
-        // 栄養は天気に関係なく少しずつ消費されます。
-        flower.nutrition = clamped(flower.nutrition - simulatedHours * 0.25)
-
-        updateStressFromCurrentCondition(hours: simulatedHours)
-
-        if hasPoorCondition {
-            flower.mood = clamped(flower.mood - simulatedHours * 1.0)
-        } else {
-            // 状態が良くても、放置中は少しずつ寂しさが溜まる想定です。
-            flower.mood = clamped(flower.mood - simulatedHours * 0.15)
-            growIfConditionsAreGood(baseAmount: simulatedHours * 0.055)
-        }
+        applyOfflineGrowthAndDecay(from: simulatedStart, to: now)
 
         lastTimeMessage = elapsedMessage(for: elapsedHours)
         saveCurrentState(now: now)
+    }
+
+    private func applyOfflineGrowthAndDecay(from start: Date, to end: Date) {
+        var current = start
+
+        while current < end {
+            let next = min(current.addingTimeInterval(3600), end)
+            let hours = next.timeIntervalSince(current) / 3600
+            let daytimeHours = isDaytime(at: current) ? hours : 0
+            let nighttimeHours = isDaytime(at: current) ? 0 : hours
+
+            if hasPoorCondition {
+                flower.mood = clamped(flower.mood - hours * 1.0)
+            } else {
+                // 条件が良い時間は、アプリを閉じていても少しずつ成長します。
+                // 最高条件を保てた場合、開花まで最短約20日が目安です。
+                growIfConditionsAreGood(baseAmount: hours * 0.167)
+                flower.mood = clamped(flower.mood - hours * 0.15)
+            }
+
+            applyHourlyWeatherEffect(
+                weather: flower.selectedWeather,
+                daytimeHours: daytimeHours,
+                nighttimeHours: nighttimeHours,
+                humidity: flower.lastHumidity,
+                windSpeed: flower.lastWindSpeed
+            )
+
+            // 栄養は天気に関係なく少しずつ消費されます。
+            flower.nutrition = clamped(flower.nutrition - hours * 0.25 / selectedVaseStyle.effect.nutritionEfficiency)
+            updateStressFromCurrentCondition(hours: hours)
+            updatePestDamage(hours: hours, daytimeHours: daytimeHours)
+
+            current = next
+        }
     }
 
     private func applyHourlyWeatherEffect(
@@ -526,29 +1142,29 @@ final class FlowerGardenViewModel: ObservableObject {
         switch weather {
         case .sunny:
             // 晴れは日光が増えますが、土は少し乾きやすくなります。
-            flower.sunlight = clamped(flower.sunlight + daytimeHours * 1.4 - nighttimeHours * 0.15)
-            flower.water = clamped(flower.water - daytimeHours * 0.5 - nighttimeHours * 0.2)
+            applySunlightChange(daytimeHours * 1.4 - nighttimeHours * 0.15)
+            applyWaterChange(-daytimeHours * 0.5 - nighttimeHours * 0.2)
             flower.mood = clamped(flower.mood + daytimeHours * 0.12 - nighttimeHours * 0.03)
         case .cloudy:
             // 曇りが続くと日光不足になり、成長しづらくなります。
-            flower.sunlight = clamped(flower.sunlight - daytimeHours * 1.0 - nighttimeHours * 0.15)
-            flower.water = clamped(flower.water - daytimeHours * 0.2 - nighttimeHours * 0.18)
+            applySunlightChange(-daytimeHours * 1.0 - nighttimeHours * 0.15)
+            applyWaterChange(-daytimeHours * 0.2 - nighttimeHours * 0.18)
             flower.mood = clamped(flower.mood - daytimeHours * 0.08 - nighttimeHours * 0.04)
         case .rainy:
             // 雨は水分が増える代わりに、日光が落ちます。降りすぎると根腐れリスクも出ます。
-            flower.water = clamped(flower.water + daytimeHours * 1.2 - nighttimeHours * 0.08)
-            flower.sunlight = clamped(flower.sunlight - daytimeHours * 1.2 - nighttimeHours * 0.15)
+            applyWaterChange(daytimeHours * 1.2 - nighttimeHours * 0.08)
+            applySunlightChange(-daytimeHours * 1.2 - nighttimeHours * 0.15)
             flower.mood = clamped(flower.mood - daytimeHours * 0.05 - nighttimeHours * 0.04)
         case .stormy:
             // 嵐は水分過多・日光不足・ストレス増加が重なりやすい危険な天気です。
-            flower.water = clamped(flower.water + daytimeHours * 1.6 - nighttimeHours * 0.05)
-            flower.sunlight = clamped(flower.sunlight - daytimeHours * 1.8 - nighttimeHours * 0.2)
-            flower.mood = clamped(flower.mood - daytimeHours * 1.0 - nighttimeHours * 0.8)
+            applyWaterChange(daytimeHours * 1.6 - nighttimeHours * 0.05)
+            applySunlightChange(-daytimeHours * 1.8 - nighttimeHours * 0.2)
+            flower.mood = clamped(flower.mood - (daytimeHours * 1.0 + nighttimeHours * 0.8) / selectedVaseStyle.effect.stressResistance)
         case .windy:
             // 強風は土が乾きやすく、花にも負担がかかります。
-            flower.water = clamped(flower.water - daytimeHours * 0.9 - nighttimeHours * 0.45)
-            flower.sunlight = clamped(flower.sunlight - daytimeHours * 0.5 - nighttimeHours * 0.15)
-            flower.mood = clamped(flower.mood - daytimeHours * 0.75 - nighttimeHours * 0.55)
+            applyWaterChange(-daytimeHours * 0.9 - nighttimeHours * 0.45)
+            applySunlightChange(-daytimeHours * 0.5 - nighttimeHours * 0.15)
+            flower.mood = clamped(flower.mood - (daytimeHours * 0.75 + nighttimeHours * 0.55) / selectedVaseStyle.effect.stressResistance)
         }
 
         applyHourlyHumidityEffect(humidity: humidity, hours: totalHours)
@@ -563,16 +1179,16 @@ final class FlowerGardenViewModel: ObservableObject {
         switch humidity {
         case ..<35:
             // 乾燥している日は水分が少し抜けやすく、花にも軽い負担がかかります。
-            flower.water = clamped(flower.water - hours * 0.28)
+            applyWaterChange(-hours * 0.28)
             flower.mood = clamped(flower.mood - hours * 0.05)
         case ..<45:
-            flower.water = clamped(flower.water - hours * 0.14)
+            applyWaterChange(-hours * 0.14)
         case 80..<90:
-            flower.water = clamped(flower.water + hours * 0.12)
+            applyWaterChange(hours * 0.12)
         case 90...:
             // 湿度が高すぎると土が乾きにくく、蒸れによるストレスも少し出ます。
-            flower.water = clamped(flower.water + hours * 0.22)
-            flower.mood = clamped(flower.mood - hours * 0.05)
+            applyWaterChange(hours * 0.22)
+            flower.mood = clamped(flower.mood - hours * 0.05 / selectedVaseStyle.effect.stressResistance)
         default:
             break
         }
@@ -586,13 +1202,13 @@ final class FlowerGardenViewModel: ObservableObject {
         switch windSpeed {
         case 35...:
             // かなり強い風は水分を奪いやすく、花の負担も大きくなります。
-            flower.water = clamped(flower.water - hours * 0.45)
-            flower.mood = clamped(flower.mood - hours * 0.28)
+            applyWaterChange(-hours * 0.45)
+            flower.mood = clamped(flower.mood - hours * 0.28 / selectedVaseStyle.effect.stressResistance)
         case 24..<35:
-            flower.water = clamped(flower.water - hours * 0.28)
-            flower.mood = clamped(flower.mood - hours * 0.14)
+            applyWaterChange(-hours * 0.28)
+            flower.mood = clamped(flower.mood - hours * 0.14 / selectedVaseStyle.effect.stressResistance)
         case 14..<24:
-            flower.water = clamped(flower.water - hours * 0.12)
+            applyWaterChange(-hours * 0.12)
         default:
             break
         }
@@ -624,56 +1240,223 @@ final class FlowerGardenViewModel: ObservableObject {
         return hour >= 6 && hour < 18
     }
 
-    private func growIfConditionsAreGood(baseAmount: Double) {
+    private func growIfConditionsAreGood(baseAmount: Double, action: CareAction? = nil) {
         // しおれ・枯れ状態ではまず回復を優先し、成長は止めます。
         guard !isWilted, !isDead else {
             return
         }
 
-        guard flower.water >= 55,
-              flower.water <= 90,
-              flower.sunlight >= 42,
-              flower.sunlight <= 94,
-              flower.nutrition >= 55,
-              flower.nutrition <= 94,
-              flower.mood >= 55,
-              stressPercent < 28 else {
+        let conditionMultiplier = growthConditionMultiplier()
+
+        guard conditionMultiplier > 0 else {
             return
         }
 
-        let averageCondition = (flower.water + flower.sunlight + flower.nutrition + flower.mood) / 4
-        let sunlightGrowthRate: Double
+        let actionMultiplier = growthActionMultiplier(for: action)
+        let previousGrowth = flower.growth
+        flower.growth = clamped(flower.growth + baseAmount * conditionMultiplier * actionMultiplier)
 
-        if flower.sunlight >= 55 {
-            sunlightGrowthRate = 1.0
-        } else if flower.sunlight >= 48 {
-            sunlightGrowthRate = 0.35
-        } else {
-            sunlightGrowthRate = 0.18
+        if previousGrowth < 100, flower.growth >= 100 {
+            recordBloomIfNeeded()
+        }
+    }
+
+    private func growthConditionMultiplier() -> Double {
+        let preference = selectedPlantSpecies.preference
+
+        guard preference.viableWater.contains(flower.water),
+              preference.viableSunlight.contains(flower.sunlight),
+              preference.viableNutrition.contains(flower.nutrition),
+              preference.viableMood.contains(flower.mood),
+              pestDamagePercent < 72,
+              stressPercent < 36 else {
+            return 0
         }
 
-        guard averageCondition >= 64 else {
-            return
+        let waterScore = rangeScore(flower.water, ideal: preference.idealWater, viable: preference.viableWater)
+        let sunlightScore = rangeScore(flower.sunlight, ideal: preference.idealSunlight, viable: preference.viableSunlight)
+        let nutritionScore = rangeScore(flower.nutrition, ideal: preference.idealNutrition, viable: preference.viableNutrition)
+        let moodScore = rangeScore(flower.mood, ideal: preference.idealMood, viable: preference.viableMood)
+
+        let coreScore = waterScore * 0.30 + sunlightScore * 0.30 + nutritionScore * 0.25 + moodScore * 0.15
+
+        guard coreScore >= 0.42 else {
+            return 0
         }
 
-        let bonus: Double
-        if averageCondition >= 88 {
-            bonus = 1.25
-        } else if averageCondition >= 78 {
-            bonus = 1.08
-        } else if averageCondition >= 68 {
-            bonus = 0.65
-        } else {
-            bonus = 0.35
+        let stressPenalty = 1 - min(stressPercent / 42, 0.75)
+        let pestPenalty = 1 - min(pestDamagePercent / 120, 0.55)
+        return coreScore * weatherGrowthMultiplier() * selectedVaseStyle.effect.growthModifier * preference.growthBias * stressPenalty * pestPenalty
+    }
+
+    private func growthActionMultiplier(for action: CareAction?) -> Double {
+        guard let action else {
+            return 1
         }
 
-        flower.growth = clamped(flower.growth + baseAmount * bonus * sunlightGrowthRate)
+        switch action {
+        case .water:
+            let dryWeatherBonus = (flower.selectedWeather == .sunny || flower.selectedWeather == .windy) ? 1.08 : 1.0
+            return rangeScore(flower.water, ideal: selectedPlantSpecies.preference.idealWater, viable: selectedPlantSpecies.preference.viableWater) * dryWeatherBonus * careAffinityMultiplier(for: .water)
+        case .sunlight:
+            let lightWeatherBonus = (flower.selectedWeather == .sunny || flower.selectedWeather == .cloudy) ? 1.08 : 0.92
+            let daytimeBonus = isCurrentWeatherDaytime ? 1.0 : 0.82
+            return rangeScore(flower.sunlight, ideal: selectedPlantSpecies.preference.idealSunlight, viable: selectedPlantSpecies.preference.viableSunlight) * lightWeatherBonus * daytimeBonus * careAffinityMultiplier(for: .sunlight)
+        case .fertilizer:
+            return rangeScore(flower.nutrition, ideal: selectedPlantSpecies.preference.idealNutrition, viable: selectedPlantSpecies.preference.viableNutrition) * careAffinityMultiplier(for: .fertilizer)
+        }
+    }
+
+    private func careAffinityMultiplier(for action: CareAction) -> Double {
+        switch (selectedPlantSpecies.preference.careAffinity, action) {
+        case (.water, .water), (.sunlight, .sunlight), (.fertilizer, .fertilizer):
+            return 1.10
+        default:
+            return 1.0
+        }
+    }
+
+    private func weatherGrowthMultiplier() -> Double {
+        var multiplier: Double
+
+        switch flower.selectedWeather {
+        case .sunny:
+            multiplier = isCurrentWeatherDaytime ? 1.18 : 0.88
+        case .cloudy:
+            multiplier = 0.90
+        case .rainy:
+            multiplier = 0.78
+        case .stormy:
+            multiplier = 0.42
+        case .windy:
+            multiplier = 0.68
+        }
+
+        if selectedPlantSpecies.preference.preferredWeather.contains(flower.selectedWeather) {
+            multiplier *= 1.16
+        }
+
+        if selectedPlantSpecies.preference.weakWeather.contains(flower.selectedWeather) {
+            multiplier *= 0.78
+        }
+
+        if let humidity = flower.lastHumidity {
+            switch humidity {
+            case ..<35:
+                multiplier *= 0.84
+            case 45...78:
+                multiplier *= 1.06
+            case 90...:
+                multiplier *= 0.82
+            default:
+                break
+            }
+        }
+
+        if let windSpeed = flower.lastWindSpeed {
+            switch windSpeed {
+            case 35...:
+                multiplier *= 0.72
+            case 24..<35:
+                multiplier *= 0.84
+            default:
+                break
+            }
+        }
+
+        if let precipitation = flower.lastPrecipitation, precipitation >= 5 {
+            multiplier *= precipitation >= 18 ? 0.76 : 0.90
+        }
+
+        return multiplier
+    }
+
+    private func rangeScore(_ value: Double, ideal: ClosedRange<Double>, viable: ClosedRange<Double>) -> Double {
+        guard viable.contains(value) else {
+            return 0
+        }
+
+        let center = (ideal.lowerBound + ideal.upperBound) / 2
+        let idealHalfWidth = max((ideal.upperBound - ideal.lowerBound) / 2, 1)
+
+        if ideal.contains(value) {
+            let distanceFromCenter = abs(value - center)
+            return 1 - (distanceFromCenter / idealHalfWidth) * 0.16
+        }
+
+        if value < ideal.lowerBound {
+            let recoverableWidth = max(ideal.lowerBound - viable.lowerBound, 1)
+            return max(0, 0.18 + 0.66 * ((value - viable.lowerBound) / recoverableWidth))
+        }
+
+        let recoverableWidth = max(viable.upperBound - ideal.upperBound, 1)
+        return max(0, 0.18 + 0.66 * ((viable.upperBound - value) / recoverableWidth))
     }
 
     private func saveCurrentState(now: Date = Date()) {
         flower.lastOpenedAt = now
         storageService.saveFlower(flower)
         scheduleNotificationsForCurrentState()
+    }
+
+    private func recordBloomIfNeeded(now: Date = Date()) {
+        guard flower.bloomRecordedAt == nil else {
+            return
+        }
+
+        let plant = selectedPlantSpecies
+        let plantedAt = flower.plantedAt ?? flower.lastOpenedAt
+        let daysToBloom = max(1, Calendar.current.dateComponents([.day], from: plantedAt, to: now).day ?? 1)
+        let record = PlantBloomRecord(
+            id: "\(plant.id)-\(Int(now.timeIntervalSince1970))",
+            plantID: plant.id,
+            plantName: plant.name,
+            bloomImageName: plant.normalStageImageNames.last ?? plant.seedImageName,
+            bloomedAt: now,
+            daysToBloom: daysToBloom,
+            careRank: bloomCareRank(daysToBloom: daysToBloom)
+        )
+
+        bloomRecords.insert(record, at: 0)
+        encyclopediaStorageService.saveRecords(bloomRecords)
+        flower.bloomRecordedAt = now
+        isBloomBonusRewardPresented = flower.bloomBonusResolvedAt == nil
+    }
+
+    private func bloomCareRank(daysToBloom: Int) -> BloomCareRank {
+        let conditionScore = (
+            rangeScore(flower.water, ideal: selectedPlantSpecies.preference.idealWater, viable: selectedPlantSpecies.preference.viableWater) * 0.30 +
+            rangeScore(flower.sunlight, ideal: selectedPlantSpecies.preference.idealSunlight, viable: selectedPlantSpecies.preference.viableSunlight) * 0.30 +
+            rangeScore(flower.nutrition, ideal: selectedPlantSpecies.preference.idealNutrition, viable: selectedPlantSpecies.preference.viableNutrition) * 0.25 +
+            rangeScore(flower.mood, ideal: selectedPlantSpecies.preference.idealMood, viable: selectedPlantSpecies.preference.viableMood) * 0.15
+        )
+        let stressPenalty = min(stressPercent / 100, 0.45)
+        let riskPenalty = min(deathRiskPercent / 100, 0.35)
+        let dayScore: Double
+
+        switch daysToBloom {
+        case ...24:
+            dayScore = 1.0
+        case 25...34:
+            dayScore = 0.85
+        case 35...49:
+            dayScore = 0.68
+        default:
+            dayScore = 0.52
+        }
+
+        let score = conditionScore * 0.62 + dayScore * 0.38 - stressPenalty - riskPenalty
+
+        switch score {
+        case 0.82...:
+            return .s
+        case 0.66..<0.82:
+            return .a
+        case 0.48..<0.66:
+            return .b
+        default:
+            return .c
+        }
     }
 
     private func scheduleNotificationsForCurrentState() {
@@ -689,8 +1472,43 @@ final class FlowerGardenViewModel: ObservableObject {
         )
     }
 
+    private func applyWaterChange(_ amount: Double) {
+        let effect = selectedVaseStyle.effect
+        let adjustedAmount = amount >= 0 ? amount * effect.waterRetention : amount / effect.waterRetention
+        flower.water = clamped(flower.water + adjustedAmount)
+    }
+
+    private func applySunlightChange(_ amount: Double) {
+        let modifier = selectedVaseStyle.effect.sunlightModifier
+        let adjustedAmount = amount >= 0 ? amount * modifier : amount / modifier
+        flower.sunlight = clamped(flower.sunlight + adjustedAmount)
+    }
+
     private func clamped(_ value: Double) -> Double {
         min(max(value, 0), 100)
+    }
+
+    private func statusColor(for statusText: String?) -> Color {
+        switch statusText {
+        case "危険":
+            return .red
+        case "多い", "高い", "注意":
+            return .orange
+        case "少ない":
+            return .yellow
+        default:
+            return .green
+        }
+    }
+
+    private var displayGrowthPercent: Int {
+        let growth = clamped(flower.growth)
+
+        if growth > 0, growth < 1 {
+            return 1
+        }
+
+        return Int(growth.rounded(.down))
     }
 
     private var currentStressHours: Double {
@@ -701,16 +1519,55 @@ final class FlowerGardenViewModel: ObservableObject {
         flower.fatalStressHours ?? 0
     }
 
+    private var currentPestDamage: Double {
+        clamped(flower.pestDamage ?? 0)
+    }
+
+    var isPestRiskWeather: Bool {
+        let temperature = currentTemperature ?? flower.lastTemperature ?? 23
+        let weatherAllowsPests = flower.selectedWeather == .sunny || flower.selectedWeather == .cloudy
+        return isCurrentWeatherDaytime && weatherAllowsPests && temperature >= 25
+    }
+
     private var currentCareStreak: Int {
         guard let lastCareDate = flower.lastCareDate else {
             return 0
         }
 
-        if Calendar.current.isDateInToday(lastCareDate) || Calendar.current.isDateInYesterday(lastCareDate) {
+        if isDateInToday(lastCareDate) || isDateInYesterday(lastCareDate) {
             return flower.careStreak ?? 0
         }
 
         return 0
+    }
+
+    private var currentOpenedDayCount: Int {
+        max(flower.openedDayCount ?? 1, 1)
+    }
+
+    private func recordAppOpenedToday(now: Date = Date()) {
+        grantDailyGachaTicketIfNeeded(now: now)
+
+        if let lastOpenedDayCountedAt = flower.lastOpenedDayCountedAt,
+           isDateInToday(lastOpenedDayCountedAt) {
+            return
+        }
+
+        flower.openedDayCount = currentOpenedDayCount + 1
+        flower.lastOpenedDayCountedAt = now
+        storageService.saveFlower(flower)
+    }
+
+    private func grantDailyGachaTicketIfNeeded(now: Date = Date()) {
+        if let lastGrantedAt = UserDefaults.standard.object(forKey: lastGachaTicketGrantedAtKey) as? Date,
+           isDateInToday(lastGrantedAt) {
+            return
+        }
+
+        gachaTicketCount += 1
+        UserDefaults.standard.set(gachaTicketCount, forKey: gachaTicketCountKey)
+        UserDefaults.standard.set(now, forKey: lastGachaTicketGrantedAtKey)
+        isDailyGachaTicketRewardPresented = true
     }
 
     private var hasPoorCondition: Bool {
@@ -718,62 +1575,60 @@ final class FlowerGardenViewModel: ObservableObject {
     }
 
     private var hasGoodRecoveryCondition: Bool {
-        flower.water >= 55 && flower.water <= 88 &&
-        flower.sunlight >= 52 && flower.sunlight <= 92 &&
-        flower.nutrition >= 55 && flower.nutrition <= 90 &&
-        flower.mood >= 50
+        waterIdealRange.contains(flower.water) &&
+        sunlightIdealRange.contains(flower.sunlight) &&
+        nutritionIdealRange.contains(flower.nutrition) &&
+        selectedPlantSpecies.preference.viableMood.contains(flower.mood)
     }
 
     private var conditionStressScore: Double {
         var score: Double = 0
+        let preference = selectedPlantSpecies.preference
 
-        switch flower.water {
-        case 98...:
+        if flower.water >= preference.viableWater.upperBound + 2 {
             // 水が多すぎる状態が続くと根腐れリスクが高くなります。
             score += 2.2
-        case 95...:
+        } else if flower.water >= preference.idealWater.upperBound + 12 {
             score += 1.45
-        case 90...:
+        } else if flower.water >= preference.idealWater.upperBound + 6 {
             score += 0.8
-        case ..<10:
+        }
+
+        if flower.water <= preference.viableWater.lowerBound - 18 {
             score += 2.2
-        case ..<20:
+        } else if flower.water <= preference.viableWater.lowerBound - 8 {
             score += 1.4
-        case ..<35:
+        } else if flower.water < preference.viableWater.lowerBound {
             score += 0.7
-        default:
-            break
         }
 
-        switch flower.sunlight {
-        case ..<10:
+        if flower.sunlight <= preference.viableSunlight.lowerBound - 18 {
             score += 1.7
-        case ..<25:
+        } else if flower.sunlight <= preference.viableSunlight.lowerBound - 8 {
             score += 1.1
-        case ..<40:
+        } else if flower.sunlight < preference.viableSunlight.lowerBound {
             score += 0.45
-        case 96...:
-            score += 0.35
-        default:
-            break
         }
 
-        switch flower.nutrition {
-        case 98...:
+        if flower.sunlight >= preference.viableSunlight.upperBound + 2 {
+            score += 0.35
+        }
+
+        if flower.nutrition >= preference.viableNutrition.upperBound + 2 {
             // 肥料が多すぎる状態が続くと肥料焼けで弱りやすくなります。
             score += 2.0
-        case 95...:
+        } else if flower.nutrition >= preference.idealNutrition.upperBound + 12 {
             score += 1.35
-        case 92...:
+        } else if flower.nutrition >= preference.idealNutrition.upperBound + 6 {
             score += 0.75
-        case ..<10:
+        }
+
+        if flower.nutrition <= preference.viableNutrition.lowerBound - 18 {
             score += 1.9
-        case ..<25:
+        } else if flower.nutrition <= preference.viableNutrition.lowerBound - 8 {
             score += 1.2
-        case ..<40:
+        } else if flower.nutrition < preference.viableNutrition.lowerBound {
             score += 0.5
-        default:
-            break
         }
 
         switch flower.mood {
@@ -787,7 +1642,58 @@ final class FlowerGardenViewModel: ObservableObject {
             break
         }
 
-        return score
+        if preference.weakWeather.contains(flower.selectedWeather) {
+            score += 0.35
+        }
+
+        switch pestDamagePercent {
+        case 70...:
+            score += 1.2
+        case 50..<70:
+            score += 0.65
+        case 30..<50:
+            score += 0.25
+        default:
+            break
+        }
+
+        return score / selectedVaseStyle.effect.stressResistance
+    }
+
+    private func updatePestDamage(hours: Double, daytimeHours: Double) {
+        guard !isDead else {
+            return
+        }
+
+        let temperature = currentTemperature ?? flower.lastTemperature ?? 23
+        let isWarmEnough = temperature >= 25
+        let weatherAllowsPests = flower.selectedWeather == .sunny || flower.selectedWeather == .cloudy
+
+        if isWarmEnough, weatherAllowsPests, daytimeHours > 0 {
+            let temperaturePressure = min(max((temperature - 25) / 10, 0), 1)
+            let weatherPressure = flower.selectedWeather == .sunny ? 1.0 : 0.72
+            let dryPressure = flower.water < 35 ? 0.18 : 0
+            let overfedPressure = flower.nutrition > selectedPlantSpecies.preference.idealNutrition.upperBound ? 0.14 : 0
+            let hourlyIncrease = (0.42 + temperaturePressure * 0.48 + dryPressure + overfedPressure) * weatherPressure
+            flower.pestDamage = clamped(currentPestDamage + daytimeHours * hourlyIncrease / selectedVaseStyle.effect.stressResistance)
+            return
+        }
+
+        let recoveryRate: Double
+        switch flower.selectedWeather {
+        case .rainy, .stormy:
+            recoveryRate = 0.95
+        case .windy:
+            recoveryRate = 0.72
+        default:
+            recoveryRate = 0.28
+        }
+
+        reducePestDamage(by: hours * recoveryRate)
+    }
+
+    private func reducePestDamage(by amount: Double) {
+        flower.pestDamage = max(0, currentPestDamage - amount)
     }
 
     private func updateStressFromCurrentCondition(hours: Double) {
@@ -827,14 +1733,12 @@ final class FlowerGardenViewModel: ObservableObject {
     }
 
     private func recordCareForToday(now: Date = Date()) {
-        let calendar = Calendar.current
-
         if let lastCareDate = flower.lastCareDate {
-            if calendar.isDateInToday(lastCareDate) {
+            if isSameCareDay(lastCareDate, now) {
                 return
             }
 
-            if calendar.isDateInYesterday(lastCareDate) {
+            if isPreviousCareDay(lastCareDate, now) {
                 flower.careStreak = (flower.careStreak ?? 0) + 1
             } else {
                 flower.careStreak = 1
@@ -863,25 +1767,66 @@ final class FlowerGardenViewModel: ObservableObject {
             return false
         }
 
-        return Calendar.current.isDateInToday(date)
+        return isDateInToday(date)
+    }
+
+    private func isDateInToday(_ date: Date, now: Date = Date()) -> Bool {
+        isSameCareDay(date, now)
+    }
+
+    private func isDateInYesterday(_ date: Date, now: Date = Date()) -> Bool {
+        isPreviousCareDay(date, now)
+    }
+
+    private func isSameCareDay(_ lhs: Date, _ rhs: Date) -> Bool {
+        let calendar = Calendar.current
+        return calendar.startOfDay(for: lhs) == calendar.startOfDay(for: rhs)
+    }
+
+    private func isPreviousCareDay(_ date: Date, _ now: Date) -> Bool {
+        let calendar = Calendar.current
+        guard let yesterdayStart = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now)) else {
+            return false
+        }
+
+        return calendar.startOfDay(for: date) == yesterdayStart
+    }
+
+    private func scheduleMidnightRefresh() {
+        midnightRefreshTask?.cancel()
+        midnightRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else {
+                    return
+                }
+
+                let now = Date()
+                let nextRefresh = self.nextMidnightRefreshDate(after: now)
+                let waitSeconds = max(1, nextRefresh.timeIntervalSince(now))
+
+                try? await Task.sleep(nanoseconds: UInt64(waitSeconds * 1_000_000_000))
+
+                guard !Task.isCancelled else {
+                    return
+                }
+
+                await MainActor.run {
+                    self.objectWillChange.send()
+                    self.scheduleNotificationsForCurrentState()
+                }
+            }
+        }
+    }
+
+    private func nextMidnightRefreshDate(after date: Date) -> Date {
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: date)
+        return calendar.date(byAdding: .day, value: 1, to: startOfToday) ?? date.addingTimeInterval(24 * 60 * 60)
     }
 
     private func plantStageNumber(for growth: Double) -> Int {
         let stageNumber = Int((growth / 100 * 9).rounded()) + 1
         return min(max(stageNumber, 1), 10)
-    }
-
-    private func visualStageLowerBoundary(for stageNumber: Int) -> Double {
-        if stageNumber <= 1 {
-            return 0
-        }
-
-        if stageNumber >= 10 {
-            return 100
-        }
-
-        // 画像段階はroundで切り替えているため、段階の境目は各中心値の中間になります。
-        return (Double(stageNumber) - 1.5) / 9 * 100
     }
 
     private func elapsedMessage(for hours: Double) -> String {

@@ -2,50 +2,72 @@ import SwiftUI
 
 struct ActionButtonsView: View {
     let isDead: Bool
+    let isFullyBloomed: Bool
     let canWater: Bool
     let canGiveSunlight: Bool
     let canFeed: Bool
+    let waterSubtitle: String
+    let sunlightSubtitle: String
+    let feedSubtitle: String
+    let isCompact: Bool
     let onReplant: () -> Void
+    let onChooseSeed: () -> Void
     let onWater: () -> Void
     let onSunlight: () -> Void
     let onFeed: () -> Void
 
     var body: some View {
-        if isDead {
-            ActionCard(
-                title: "植え替え",
-                subtitle: "最初から育てる",
-                systemImage: "arrow.triangle.2.circlepath",
-                tint: .green,
-                isEnabled: true,
-                action: onReplant
-            )
+        if isDead || isFullyBloomed {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: isCompact ? 8 : 10), count: 2), spacing: isCompact ? 8 : 10) {
+                ActionCard(
+                    title: "植え替え",
+                    subtitle: "同じ種で育てる",
+                    systemImage: "arrow.triangle.2.circlepath",
+                    tint: .green,
+                    isEnabled: true,
+                    isCompact: isCompact,
+                    action: onReplant
+                )
+
+                ActionCard(
+                    title: "種を選ぶ",
+                    subtitle: "植物を変更",
+                    systemImage: "camera.macro",
+                    tint: .mint,
+                    isEnabled: true,
+                    isCompact: isCompact,
+                    action: onChooseSeed
+                )
+            }
         } else {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: isCompact ? 8 : 10), count: 3), spacing: isCompact ? 8 : 10) {
                 ActionCard(
                     title: "水やり",
-                    subtitle: canWater ? "水分 +18%" : "今日は完了",
+                    subtitle: waterSubtitle,
                     systemImage: "drop.fill",
                     tint: .cyan,
                     isEnabled: canWater,
+                    isCompact: isCompact,
                     action: onWater
                 )
 
                 ActionCard(
-                    title: "日光",
-                    subtitle: canGiveSunlight ? "日光 +18%" : "今日は完了",
-                    systemImage: "sun.max.fill",
+                    title: "ライト",
+                    subtitle: sunlightSubtitle,
+                    systemImage: "lightbulb.fill",
                     tint: .orange,
                     isEnabled: canGiveSunlight,
+                    isCompact: isCompact,
                     action: onSunlight
                 )
 
                 ActionCard(
                     title: "肥料",
-                    subtitle: canFeed ? "栄養 +20%" : "今日は完了",
+                    subtitle: feedSubtitle,
                     systemImage: "leaf.fill",
                     tint: .green,
                     isEnabled: canFeed,
+                    isCompact: isCompact,
                     action: onFeed
                 )
             }
@@ -59,34 +81,35 @@ private struct ActionCard: View {
     let systemImage: String
     let tint: Color
     let isEnabled: Bool
+    let isCompact: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 4) {
+            VStack(spacing: isCompact ? 2 : 4) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 24, weight: .bold))
-                    .foregroundStyle(isEnabled ? tint : .gray.opacity(0.65))
+                    .font(.system(size: isCompact ? 21 : 24, weight: .bold))
+                    .foregroundStyle(isEnabled ? tint : .gray.opacity(0.9))
 
                 Text(title)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(isEnabled ? .brown.opacity(0.9) : .gray.opacity(0.8))
+                    .font((isCompact ? Font.caption : Font.subheadline).weight(.bold))
+                    .foregroundStyle(isEnabled ? .brown.opacity(0.9) : .gray.opacity(0.95))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.72)
+                    .minimumScaleFactor(0.62)
 
                 Text(subtitle)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(isEnabled ? tint : .gray.opacity(0.75))
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(isEnabled ? tint : .gray.opacity(0.95))
                     .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .minimumScaleFactor(0.55)
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 76)
+            .frame(height: isCompact ? 64 : 76)
             .background(
                 LinearGradient(
                     colors: [
-                        .white.opacity(isEnabled ? 0.96 : 0.74),
-                        (isEnabled ? tint : .gray).opacity(isEnabled ? 0.12 : 0.08)
+                        .white.opacity(isEnabled ? 0.96 : 0.88),
+                        (isEnabled ? tint : .gray).opacity(isEnabled ? 0.12 : 0.20)
                     ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
@@ -95,11 +118,11 @@ private struct ActionCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(.white.opacity(0.85), lineWidth: 1)
+                    .stroke(isEnabled ? .white.opacity(0.85) : .gray.opacity(0.42), lineWidth: 1)
             )
-            .shadow(color: tint.opacity(0.14), radius: 8, y: 4)
+            .shadow(color: tint.opacity(isEnabled ? 0.14 : 0.08), radius: 8, y: 4)
         }
         .buttonStyle(.plain)
-        .disabled(!isEnabled)
+        .allowsHitTesting(isEnabled)
     }
 }
