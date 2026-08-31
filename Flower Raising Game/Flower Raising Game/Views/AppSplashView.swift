@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SplashRootView: View {
     @State private var isShowingSplash = true
+    @State private var splashDismissalScheduled = false
 
     var body: some View {
         ZStack {
@@ -14,13 +15,49 @@ struct SplashRootView: View {
                     .zIndex(2)
             }
         }
-        .task {
-            try? await Task.sleep(nanoseconds: 2_350_000_000)
+        .onAppear {
+            scheduleSplashDismissalIfNeeded()
+        }
+        .onOpenURL { url in
+            guard url.scheme?.lowercased() == "flowerraising" else {
+                return
+            }
+
+            // WidgetからのコールドスタートではURL配送時にsceneが一度切り替わることがあるため、
+            // 通常のスプラッシュ待機をせずホーム画面を確実に表示します。
+            dismissSplash(animated: false)
+        }
+    }
+
+    private func scheduleSplashDismissalIfNeeded() {
+        guard !splashDismissalScheduled else {
+            return
+        }
+        splashDismissalScheduled = true
+
+        // Viewのtaskはscene遷移でキャンセルされ得るため、起動演出の終了保証には
+        // メインキューの期限付き処理を使用します。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.35) {
+            dismissSplash(animated: true)
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) {
+                TrackingAuthorizationService.requestIfNeeded()
+                startDeferredAppServices()
+            }
+        }
+    }
+
+    private func dismissSplash(animated: Bool) {
+        guard isShowingSplash else {
+            return
+        }
+
+        if animated {
             withAnimation(.easeInOut(duration: 0.42)) {
                 isShowingSplash = false
             }
-            try? await Task.sleep(nanoseconds: 650_000_000)
-            TrackingAuthorizationService.requestIfNeeded()
+        } else {
+            isShowingSplash = false
         }
     }
 }

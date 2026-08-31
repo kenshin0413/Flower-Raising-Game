@@ -7,6 +7,8 @@
 
 import StoreKit
 import SwiftUI
+import UserNotifications
+import WidgetKit
 
 private enum RewardedCareAction {
     case water
@@ -49,6 +51,8 @@ struct ContentView: View {
     @State private var isRewardedAdConfirmationPresented = false
     @State private var isBloomBonusCelebrationPresented = false
     @State private var bloomBonusCelebrationID = 0
+    @State private var isWidgetGuidePresented = false
+    @AppStorage("widget_promotion_seen_v1") private var hasSeenWidgetPromotion = false
 
     var body: some View {
         ZStack {
@@ -339,6 +343,16 @@ struct ContentView: View {
             }
             .presentationDetents([.medium, .large])
         }
+        .sheet(isPresented: $isWidgetGuidePresented, onDismiss: {
+            hasSeenWidgetPromotion = true
+        }) {
+            WidgetSetupGuideView {
+                hasSeenWidgetPromotion = true
+                isWidgetGuidePresented = false
+            }
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 backgroundMusicService.startIfEnabled()
@@ -351,6 +365,7 @@ struct ContentView: View {
             }
 
             viewModel.applyElapsedTimeIfNeeded()
+            WidgetCenter.shared.reloadAllTimelines()
 
             Task {
                 await viewModel.refreshRealWeather()
@@ -359,6 +374,9 @@ struct ContentView: View {
         }
         .task {
             await appUpdateService.checkForUpdateIfNeeded(force: true)
+        }
+        .task {
+            await presentWidgetPromotionIfNeeded()
         }
         .task {
             while !Task.isCancelled {
@@ -379,6 +397,44 @@ struct ContentView: View {
 
     private var displayedPlantImageName: String? {
         viewModel.plantImageName
+    }
+
+    private func presentWidgetPromotionIfNeeded() async {
+        guard !hasSeenWidgetPromotion else {
+            return
+        }
+
+        let isInstalled = await withCheckedContinuation { continuation in
+            WidgetCenter.shared.getCurrentConfigurations { result in
+                let installed = (try? result.get())?.contains { $0.kind == "FlowerCareWidgetV2" } ?? false
+                continuation.resume(returning: installed)
+            }
+        }
+
+        if isInstalled {
+            hasSeenWidgetPromotion = true
+            return
+        }
+
+        // 初回の許可ダイアログや起動画面と重ならないよう、少し待ってから案内します。
+        try? await Task.sleep(for: .seconds(2.5))
+
+        for _ in 0..<30 {
+            let settings = await UNUserNotificationCenter.current().notificationSettings()
+            guard settings.authorizationStatus == .notDetermined else {
+                break
+            }
+            try? await Task.sleep(for: .seconds(1))
+        }
+
+        let notificationSettings = await UNUserNotificationCenter.current().notificationSettings()
+        guard !Task.isCancelled, !hasSeenWidgetPromotion else {
+            return
+        }
+        guard notificationSettings.authorizationStatus != .notDetermined else {
+            return
+        }
+        isWidgetGuidePresented = true
     }
 
     private var displayedGrowthPercentText: String {

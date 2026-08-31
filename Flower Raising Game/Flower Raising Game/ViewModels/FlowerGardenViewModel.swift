@@ -1735,6 +1735,8 @@ final class FlowerGardenViewModel: ObservableObject {
     private func recordCareForToday(now: Date = Date()) {
         if let lastCareDate = flower.lastCareDate {
             if isSameCareDay(lastCareDate, now) {
+                // 連続日数は増やさず、Widgetが参照する最終お世話時刻だけ更新します。
+                flower.lastCareDate = now
                 return
             }
 
