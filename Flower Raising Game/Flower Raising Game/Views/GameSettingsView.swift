@@ -53,6 +53,19 @@ struct GameSettingsView: View {
                         )
                     }
                     .buttonStyle(.plain)
+
+                    NavigationLink {
+                        WidgetSetupGuideView()
+                    } label: {
+                        SettingsMenuCard(
+                            title: "ホーム画面ウィジェット",
+                            subtitle: "花の機嫌をいつでも確認",
+                            footnote: "追加方法を見る",
+                            systemImage: "rectangle.3.group.fill",
+                            tint: .orange
+                        )
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .toolbar {
